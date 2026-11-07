@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import random
 import tempfile
+import time
 import unittest
 
 from house import House
@@ -62,6 +63,47 @@ class ChaosTests(unittest.TestCase):
         self.assertFalse(self.world.apply({'target':self.key,'kind':'close'},100))
         self.assertFalse(self.backend.states)
         self.assertFalse(self.backend.calls)
+
+    def test_housemates_receive_actor_and_observed_outcome_without_native_handles(self):
+        now = time.monotonic()
+        self.assertTrue(self.world.apply({'target':self.key,'dx':100},now,animated=True,actor='Cody'))
+        context = self.world.context()
+        self.assertEqual(context['recent_play'][-1]['actor'],'Cody')
+        self.assertFalse(context['recent_play'][-1]['observed_changed'])
+        self.world.animate(now+1)
+        context = self.world.context()
+        self.assertTrue(context['recent_play'][-1]['observed_changed'])
+        self.assertTrue(context['capabilities']['enabled'])
+        self.assertFalse(context['capabilities']['closing'])
+        self.assertNotIn('hwnd',json.dumps(context))
+        self.assertNotIn('c:\\\\apps',json.dumps(context).lower())
+        self.world.overrides[self.key] = clean_rule({'observe':'ignore'})
+        self.assertFalse(self.world.context()['recent_play'])
+
+    def test_rejected_ai_action_is_reported_as_rejected_not_successful(self):
+        self.assertFalse(self.world.apply({'target':self.key,'kind':'close'},actor='Victoria'))
+        feedback = self.world.context()['recent_play'][-1]
+        self.assertEqual(feedback['operation'],'rejected')
+        self.assertFalse(feedback['observed_changed'])
+        self.assertIn('Closing is never allowed',feedback['status'])
+
+    def test_victoria_actually_aligns_a_window_instead_of_randomly_shuffling_it(self):
+        now = time.monotonic()
+        self.assertEqual(self.world.play('Victoria',random.Random(5),now),self.key)
+        self.world.animate(now+2)
+        self.assertEqual(self.backend.record['rect'][:2],[24,24])
+        feedback = self.world.context()['recent_play'][-1]
+        self.assertEqual(feedback['actor'],'Victoria')
+        self.assertIn('aligning',feedback['intent'])
+
+    def test_rearranging_a_friends_window_is_shared_as_social_context(self):
+        now = time.monotonic()
+        self.assertTrue(self.world.apply({'target':self.key,'dx':100},now,animated=True,actor='Burt'))
+        self.world.animate(now+2)
+        self.assertEqual(self.world.play('Victoria',random.Random(5),now+6),self.key)
+        feedback = self.world.context()['recent_play'][-1]
+        self.assertEqual(feedback['actor'],'Victoria')
+        self.assertIn('Burt just played with',feedback['intent'])
 
     def test_pause_and_policy_revocation_cancel_an_animation(self):
         self.assertTrue(self.world.apply({'target':self.key,'dx':100},100,animated=True))

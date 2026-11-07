@@ -152,6 +152,11 @@ class WindowTests(unittest.TestCase):
             body = payload(DEFAULT_MODEL,'Mika',[],[],[],'Hello',game=game,movie=movie,windows=context)
             sent = json.loads(body['contents'][0]['parts'][0]['text'])
             self.assertEqual('desktop_windows' in sent,not game and not movie)
+        self.options['play_during_activities'] = True
+        for game,movie in [({'game':'Poker'},False),(None,True)]:
+            body = payload(DEFAULT_MODEL,'Mika',[],[],[],'Hello',game=game,movie=movie,windows=self.world.context())
+            sent = json.loads(body['contents'][0]['parts'][0]['text'])
+            self.assertTrue(sent['desktop_windows']['capabilities']['during_activities'])
 
 
 class PhysicsTests(unittest.TestCase):

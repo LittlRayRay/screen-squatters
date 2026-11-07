@@ -233,6 +233,7 @@ class WindowWorld:
         self.overrides = {}
         self.events = deque(maxlen=16)
         self.audit = deque(maxlen=12)
+        self.play_history = deque(maxlen=12)
         self.actions = deque()
         self.last_action = {}
         self.anchors = {}
@@ -314,14 +315,24 @@ class WindowWorld:
         if not candidates:
             self.status = 'Window play is off.' if not self.options.get('window_control') else 'No permitted ordinary app windows are available.'
         rng.shuffle(candidates)
+        friend_stunt = next((entry for entry in reversed(self.play_history)
+                             if not entry.get('rejected') and entry['actor']!=name
+                             and (time.monotonic() if now is None else now)-entry['time']<45
+                             and entry['target'] in candidates),None)
+        if friend_stunt and rng.random()<.45:
+            candidates.remove(friend_stunt['target'])
+            candidates.insert(0,friend_stunt['target'])
         for key in candidates:
             chaos = self.options.get('playfulness',3)>=4
             amount = min(self.rule(key)['distance'],180) if chaos else min(self.rule(key)['distance'],65)
             dx,dy = rng.choice((-amount,amount)),rng.choice((-amount//2,amount//2))
             if name == 'Mika':
-                dx,dy = amount//2,-amount//3
+                dx,dy = rng.choice((-amount,amount)),-amount//3
             elif name == 'Victoria':
-                dx,dy = rng.choice((-amount,amount)),0
+                # She actually aligns the window, rather than only claiming to tidy.
+                item = self.windows[key]
+                dx = max(-amount,min(amount,item['work'][0]+24-item['rect'][0]))
+                dy = max(-amount,min(amount,item['work'][1]+24-item['rect'][1]))
             action = {'target':key,'dx':dx,'dy':dy}
             if self.rule(key)['control']=='resize' and rng.random()<(.6 if chaos else .3):
                 action.update(dw=rng.choice((-96,96)),dh=rng.choice((-48,48)))
@@ -332,7 +343,14 @@ class WindowWorld:
                     action.update(dw=-128,dh=-96)
             if chaos and self.options.get('window_scope')=='all' and rng.random()<.08:
                 action['kind'] = 'maximize'
-            if self.apply(action,now,animated=True,shake=chaos and name in ('Burt','Cody')):
+            intent = {'Burt':'trying to straighten it, with a clumsy wobble',
+                      'Cody':'excitedly making room, with a bouncy shuffle',
+                      'Victoria':'fussily aligning it near the monitor corner',
+                      'Mika':'cheekily scooting it aside'}.get(name,'playing with a window')
+            if friend_stunt and key==friend_stunt['target']:
+                intent += '; rearranging the window '+friend_stunt['actor']+' just played with'
+            if self.apply(action,now,animated=True,shake=chaos and name in ('Burt','Cody'),actor=name,
+                          intent=intent):
                 return key
         return None
 
@@ -366,14 +384,47 @@ class WindowWorld:
             data = self.public(event['window'],event['record'])
             if data:
                 events.append({'event':event['event'],'window':data})
+        recent_play = []
+        for attempt in self.play_history:
+            key = attempt['target']
+            if time.monotonic()-attempt['time']>90 or key not in self.windows:
+                continue
+            if self.public(key,self.windows[key]) is None:
+                continue
+            live = self.backend.inspect(attempt['identity'][0])
+            if not live or identity(live)!=attempt['identity']:
+                continue
+            changed = not attempt.get('rejected') and (live['rect']!=attempt['before_rect'] or live['state']!=attempt['before_state'])
+            recent_play.append({'actor':attempt['actor'],'target':key,'intent':attempt['intent'],
+                                'operation':attempt['operation'],'observed_changed':changed,
+                                'status':attempt.get('rejected') or ('change observed after request' if changed else 'requested; change not yet observed')})
         return {'windows':windows[:20],'total_visible':len(windows),'events':events[-5:],
+                'capabilities':{'enabled':bool(self.options.get('window_control')),
+                                'mode':'chaos' if self.options.get('playfulness')==4 else 'normal',
+                                'state_changes':self.options.get('window_scope')=='all',
+                                'during_activities':bool(self.options.get('play_during_activities')),
+                                'cooldown_seconds':self.options.get('window_cooldown',30),
+                                'actions_per_minute':self.options.get('window_actions_per_minute',3),
+                                'closing':False},'recent_play':recent_play[-4:],
                 'source':'Native Windows metadata, no screenshot or window contents.'}
 
     def blocked(self,message):
         self.status = message
         return False
 
-    def apply(self, action, now=None, animated=False, shake=False, manual=False):
+    def apply(self, action, now=None, animated=False, shake=False, manual=False, actor=None, intent=None):
+        self.status = 'The requested action was invalid.'
+        result = self._apply(action,now,animated,shake,manual,actor,intent)
+        key = action.get('target') if isinstance(action,dict) else None
+        if not result and intent is None and actor in ('Burt','Cody','Victoria','Mika') and isinstance(key,str) and key in self.windows:
+            live = self.windows[key]
+            self.play_history.append({'actor':actor,'target':key,'identity':identity(live),
+                                      'before_rect':list(live['rect']),'before_state':live['state'],
+                                      'time':time.monotonic() if now is None else now,'intent':'attempted window play',
+                                      'operation':'rejected','rejected':self.status})
+        return result
+
+    def _apply(self, action, now=None, animated=False, shake=False, manual=False, actor=None, intent=None):
         now = time.monotonic() if now is None else now
         if not self.options.get('window_awareness') or not self.options.get('window_control') or not isinstance(action,dict):
             return self.blocked('Window play is switched off.')
@@ -383,6 +434,8 @@ class WindowWorld:
         key = action.get('target')
         if not isinstance(key,str) or key not in self.windows:
             return self.blocked('The target window is no longer available.')
+        if self.animations:
+            return self.blocked('Waiting for the current window stunt to finish.')
         record,rule = self.windows[key],self.rule(key)
         if rule['observe'] == 'ignore' or rule['control'] == 'none':
             return self.blocked('This window is excluded by its policy.')
@@ -408,7 +461,7 @@ class WindowWorld:
             wanted = {'restore':'normal','maximize':'maximized','minimize':'minimized'}[kind]
             if live['state']==wanted or not self.backend.set_state(live,kind):
                 return self.blocked('No state change was needed or the app declined it.')
-            self.record_action(key,live,now,f'{kind} requested')
+            self.record_action(key,live,now,f'{kind} requested',actor,intent or 'chose a window state change',kind)
             return True
         deltas = [action.get(key,0) for key in ('dx','dy','dw','dh')]
         if any(type(value) not in (int,float) or not math.isfinite(value) for value in deltas):
@@ -446,15 +499,20 @@ class WindowWorld:
         elif not self.backend.position(live,rect):
             return self.blocked('The app refused the move.')
         self.anchors.setdefault(key,list(live['rect']))
-        self.record_action(key,live,now,f'animated move/resize within {limit}px' if animated else f'move/resize within {limit}px')
+        self.record_action(key,live,now,f'animated move/resize within {limit}px' if animated else f'move/resize within {limit}px',
+                           actor,intent or 'chose to rearrange this window','shake/resize' if shake else 'move/resize')
         return True
 
-    def record_action(self,key,live,now,description):
+    def record_action(self,key,live,now,description,actor=None,intent='',operation='move'):
         self.undos.append((identity(live),list(live['rect']),live['state']))
         self.last_action[key] = now
         self.actions.append(now)
         self.status = f"{live['app']}: {description}"
         self.audit.append(self.status)
+        if actor in ('Burt','Cody','Victoria','Mika'):
+            self.play_history.append({'actor':actor,'target':key,'identity':identity(live),
+                                      'before_rect':list(live['rect']),'before_state':live['state'],
+                                      'time':now,'intent':intent,'operation':operation})
 
     def animate(self,now=None):
         now = time.monotonic() if now is None else now

@@ -702,6 +702,7 @@ class ScreenSquatters:
         self.windows.anchors.clear()
         self.windows.undos.clear()
         self.windows.events.clear()
+        self.windows.play_history.clear()
         self.windows_epoch += 1
         self.habitat.open = False
         self.windows.backend.set_monitoring(False)
@@ -838,8 +839,8 @@ class ScreenSquatters:
             event = self.social.react(name,result,self.world,self.awake(),time.monotonic(),allowed=ordinary) if not night else None
             if event:
                 self.note(event)
-            if ordinary and result.window_action:
-                self.windows.apply(result.window_action)
+            if (ordinary or self.house.options['play_during_activities']) and result.window_action:
+                self.windows.apply(result.window_action,animated=True,shake=name in ('Burt','Cody'),actor=name)
             if ordinary and result.game_offer.get('game') in KINDS and time.monotonic()>=self.next_game_offer and not self.pending:
                 self.proposed_offer = (name,result.game_offer['game'],str(result.game_offer.get('topic',''))[:300])
             target = result.social_action.get('target')
