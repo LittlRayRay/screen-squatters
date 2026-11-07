@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ai import Turn
 from desktop import ScreenSquatters
 from games import Mafia
+from poker import Poker
 from screen import _libraries, capture_window
 
 temporary = tempfile.TemporaryDirectory()
@@ -24,6 +25,10 @@ def pump():
         root.update()
         app.poll(reschedule=False)
         time.sleep(.02)
+
+def finish_speech():
+    if app.deliveries:
+        app.dialogue_tick(max(item['line'].end for item in app.deliveries)+.1)
 
 try:
     pump()
@@ -65,7 +70,12 @@ try:
         pump()
     assert app.house.agents["Burt"]["used"] == 500
     assert app.house.agents["Byte"]["memories"][0]["from"] == "Burt"
+    assert 'moon was cheese' not in app.transcript.get('1.0','end'), 'Speech should begin with a typing pause'
+    app.append('You','I am listening.')
+    finish_speech()
     assert "moon was cheese" in app.transcript.get("1.0", "end")
+    transcript = app.transcript.get('1.0','end')
+    assert transcript.index('moon was cheese') < transcript.index('I am listening.'), 'Typewriter text must stay with its original message'
     # Freeze translations without disabling chat, wake/sleep or manual placement.
     app.stand_still.set(True)
     app.stand_still_changed()
@@ -127,6 +137,7 @@ try:
         app.request_turn("Byte", "Play")
         pump()
     assert app.game.board[4] == "O"
+    finish_speech()
     app.cancel_game()
     app.start_mafia()
     assert isinstance(app.game, Mafia)
@@ -135,7 +146,43 @@ try:
         app.request_turn("Burt", "Discuss")
         pump()
     assert "Burt" in app.game.spoken
+    finish_speech()
     app.cancel_game()
+    # Poker uses the shared table, private hands, voluntary reveals and paced AI turns.
+    app.start_poker()
+    pump()
+    assert isinstance(app.game,Poker) and app.poker_table is not None
+    assert all(not win.winfo_viewable() for win,_ in app.floaters.values()), 'Housemates sit at the table instead of appearing twice'
+    with patch('desktop.companion_turn',return_value=Turn(speech='Fine, I call.',used=100,poker_action='call',reveal_cards=True)):
+        app.request_turn('Rex','Play poker')
+        pump()
+    assert app.game.actor == 'You'
+    assert app.game.view('Burt')['shown_cards'] == {'Rex':app.game.hands['Rex']}
+    assert app.speech_pending(), 'The next AI turn waits for the current visible reply'
+    app.poker_table.reveal_on_action.set(True)
+    app.poker_table.action('call')
+    assert 'You' in app.game.revealed
+    finish_speech()
+    with patch('desktop.companion_turn',return_value=Turn(used=100,poker_action='invalid',reveal_cards=False)):
+        app.request_turn('Burt','Play poker')
+        pump()
+    assert app.game.actor == 'Byte', 'An invalid model action uses a safe legal fallback'
+    assert 'Burt' not in app.game.revealed
+    for widget in app.game_window.winfo_children():
+        assert widget.winfo_viewable(), 'Poker controls must be visible'
+        assert widget.winfo_rooty()+widget.winfo_height() <= app.game_window.winfo_rooty()+app.game_window.winfo_height()+1, 'Poker controls must fit in the window'
+    while not app.game.result:
+        actor = app.game.actor
+        legal = app.game.legal_actions(actor)
+        app.game.act(actor,'check' if 'check' in legal else 'call')
+    app.render_game()
+    dealer = app.game.dealer
+    app.next_poker_hand()
+    assert app.game.dealer == (dealer+1)%4 and not app.game.revealed
+    app.cancel_game()
+    pump()
+    assert app.poker_table is None
+    assert all(win.winfo_viewable() for win,_ in app.floaters.values())
     app.show_settings()
     pump()
     assert app.settings.winfo_viewable()
@@ -191,7 +238,7 @@ try:
     app.handle_turn(old_generation, 0, "Burt", Turn(speech="STALE REPLY", used=500))
     assert "STALE REPLY" not in app.transcript.get("1.0", "end")
     assert app.house.agents["Burt"]["used"] == 0
-    print("UI smoke passed: house/cutaway, sleep recovery, stand still, chat movie invite, seated companions, movie frame capture, screen interests, shared memory, games, pause and reset.")
+    print("UI smoke passed: house/cutaway, sleep recovery, stand still, movie mode, screen interests, paced speech, shared memory, poker table/actions/reveals/redeal, other games, pause and reset.")
 finally:
     app.quit()
     temporary.cleanup()

@@ -7,6 +7,8 @@ from tkinter import scrolledtext
 
 from behaviour import World
 from house import CHARACTERS
+from poker import Poker
+from visuals import speech_bubble
 from screen import make_clickthrough, make_noactivate
 
 BG, PANEL, FG, MUTED = "#171923", "#242738", "#f1edff", "#abaec7"
@@ -102,6 +104,7 @@ class Habitat:
         games = tk.Menu(menu, tearoff=False)
         games.add_command(label="Tic-tac-toe", command=app.choose_ttt)
         games.add_command(label="Mafia", command=app.start_mafia)
+        games.add_command(label="Poker night", command=app.start_poker)
         menu.add_cascade(label="Play a game", menu=games)
         menu.add_separator()
         menu.add_command(label="Settings & memories", command=app.show_settings)
@@ -275,16 +278,22 @@ class Habitat:
         for resident in self.world.residents.values():
             if resident.mode == "returning":
                 resident.goal = self.world.home
-        arrived = self.world.step(now-self.last_frame, now, autonomous=app.autonomy.get())
+        poker = isinstance(app.game,Poker)
+        arrived = [] if poker else self.world.step(now-self.last_frame, now, autonomous=app.autonomy.get())
         self.last_frame = now
         for name in arrived:
             resident = self.world.residents[name]
             if resident.pending_speech:
-                app.bubbles[name] = (resident.pending_speech[:180], now+18)
+                app.bubbles[name] = (resident.pending_speech, now+18)
                 resident.pending_speech = ""
         self.draw_house()
         for name, (win, canvas) in app.floaters.items():
             resident = self.world.residents[name]
+            if poker:
+                win.withdraw()
+                if name in self.markers:
+                    self.markers[name][0].withdraw()
+                continue
             if resident.mode == "home":
                 win.withdraw()
                 if name in self.markers:
@@ -295,22 +304,15 @@ class Habitat:
             if not win.winfo_viewable():
                 win.deiconify()
             canvas.delete("all")
-            text, until = app.bubbles[name]
-            private = getattr(app.game, "phase", None) == "night" and not app.game.result
-            if app.busy_name == name and not private and not app.movie_mode.get():
-                text, until = "hmm...", now+1
-            if resident.mode == "returning":
-                text, until = "heading home...", now+1
-            if text and until > now:
-                canvas.create_rectangle(5, 2, 185, 98, fill=PANEL, outline="#554961", width=2)
-                canvas.create_polygon(81, 98, 91, 109, 102, 98, fill=PANEL, outline="")
-                canvas.create_text(95, 50, text=text[:150], width=161, fill=FG, font=("Segoe UI", 9))
+            text, typing, talking = app.bubble_state(name,now)
+            if text or typing:
+                speech_bubble(canvas,name,text,color=CHARACTERS[name]['color'],typing=typing,phase=app.frame)
             gaze = (0, 0)
             if resident.gaze:
                 dx, dy = resident.gaze[0]-(resident.x+95), resident.gaze[1]-(resident.y+150)
                 distance = max(1, math.hypot(dx, dy))
                 gaze = (dx/distance, dy/distance)
-            self.paint(canvas, name, 95, 161, .95, False, app.frame, gaze=gaze,
+            self.paint(canvas, name, 95, 165, .95, False, app.frame+list(CHARACTERS).index(name)*17, gaze=gaze,talking=talking,
                        pointing=resident.mode == "interested", walking=resident.mode in {"walking", "returning", "approaching", "settling"},
                        seated=resident.mode == "seated")
             self.marker(name, resident)

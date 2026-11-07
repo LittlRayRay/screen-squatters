@@ -14,6 +14,9 @@ from tkinter import messagebox, simpledialog, ttk
 from ai import DEFAULT_MODEL, companion_turn
 from bridge import BridgeServer, BrowserFeed, PORT
 from games import Mafia, TicTacToe
+from poker import Poker
+from poker_ui import PokerTable
+from speech import SpeechLine
 from house import CHARACTERS, House
 from habitat import Habitat
 from behaviour import interest_point
@@ -24,9 +27,12 @@ BG, PANEL, FG, MUTED = "#171923", "#242738", "#f1edff", "#abaec7"
 ACCENT, TRANSPARENT = "#c5b0ff", "#010203"
 
 
-def draw_friend(canvas, name, x, y, scale=1, asleep=False, phase=0, gaze=(0, 0), pointing=False, walking=False, seated=False):
+def draw_friend(canvas, name, x, y, scale=1, asleep=False, phase=0, gaze=(0, 0), pointing=False, walking=False, seated=False, talking=False, popcorn=True):
     color = CHARACTERS[name]["color"]
-    bob = 0 if asleep else math.sin(phase / (3 if walking else 10)) * 3
+    stride = math.sin(phase/3) if walking else 0
+    bob = math.sin(phase/16)*1.2 if asleep else abs(stride)*4 if walking else math.sin(phase/8)*1.8
+    if talking:
+        bob += math.sin(phase/2.3)*1.1
     def box(a, b, c, d):
         return x+a*scale, y+(b+bob)*scale, x+c*scale, y+(d+bob)*scale
     canvas.create_oval(*box(-34, 42, 34, 53), fill="#343247", outline="")
@@ -38,10 +44,12 @@ def draw_friend(canvas, name, x, y, scale=1, asleep=False, phase=0, gaze=(0, 0),
         canvas.create_rectangle(*box(32, 19, 48, 44), fill="#a18bad", outline="#675b79", width=2)
         for leg in (-31, 27):
             canvas.create_rectangle(*box(leg, 49, leg+5, 62), fill="#cda883", outline="")
-    for foot in (-20, 11):
-        canvas.create_oval(*box(foot, 28, foot+15, 47), fill=color, outline="#5f5574", width=2)
-    canvas.create_oval(*box(-37, -15, -17, 9), fill=color, outline="")
-    canvas.create_oval(*box(17, -15, 37, 9), fill=color, outline="")
+    for i, foot in enumerate((-20, 11)):
+        step = stride*(1 if i else -1)
+        canvas.create_oval(*box(foot+step*6, 28-max(0,step)*8, foot+15+step*6, 47-max(0,step)*8), fill=color, outline="#5f5574", width=2)
+    gesture = math.sin(phase/4)*6 if talking else 0
+    canvas.create_oval(*box(-37-stride*3, -15+stride*7-gesture, -17-stride*3, 9+stride*7-gesture), fill=color, outline="")
+    canvas.create_oval(*box(17+stride*3, -15-stride*7+gesture, 37+stride*3, 9-stride*7+gesture), fill=color, outline="")
     canvas.create_oval(*box(-29, -43, 29, 38), fill=color, outline="#5f5574", width=2)
     canvas.create_oval(*box(-20, -34, -5, -23), fill="#efedff", outline="")
     for eye in (-11, 11):
@@ -65,6 +73,10 @@ def draw_friend(canvas, name, x, y, scale=1, asleep=False, phase=0, gaze=(0, 0),
                            x+12*scale, y+(-56+bob)*scale, smooth=True, fill="#78618f", width=3)
     if asleep:
         canvas.create_text(x+30*scale, y-40*scale, text="z Z", fill=MUTED, font=("Segoe UI", max(8, int(11*scale))))
+    elif talking:
+        opening = 3+abs(math.sin(phase/1.7))*7
+        canvas.create_oval(*box(-6,5,7,5+opening),fill="#49334e",outline=BG,width=1)
+        canvas.create_arc(*box(-4,7,5,7+opening),start=0,extent=180,fill="#dc91a9",outline='')
     else:
         canvas.create_arc(*box(-9, 0, 10, 16), start=195, extent=145, style="arc", outline=BG, width=2)
     if pointing:
@@ -72,7 +84,7 @@ def draw_friend(canvas, name, x, y, scale=1, asleep=False, phase=0, gaze=(0, 0),
         points = (x+direction*24*scale, y+(7+bob)*scale, x+direction*53*scale, y+(gaze[1]*20+bob)*scale)
         canvas.create_line(*points, fill="#5f5574", width=max(3, int(10*scale)), capstyle="round")
         canvas.create_line(*points, fill=color, width=max(2, int(6*scale)), capstyle="round")
-    if seated:
+    if seated and popcorn:
         points = [(17, 15), (41, 15), (37, 43), (21, 43)]
         canvas.create_polygon(*[v for a, b in points for v in (x+a*scale, y+(b+bob)*scale)], fill="#ce6769", outline="#7f484f", width=1)
         for stripe in (24, 32):
@@ -115,6 +127,10 @@ class ScreenSquatters:
         self.memory_windows = []
         self.frame = 0
         self.bubbles = {name: ("", 0) for name in CHARACTERS}
+        self.speech_lines = {}
+        self.deliveries = []
+        self.delivery_id = 0
+        self.poker_table = None
         token_path = self.local / "pairing-code.txt"
         self.token = token_path.read_text().strip() if token_path.exists() else ""
         if len(self.token) != 48:
@@ -205,7 +221,18 @@ class ScreenSquatters:
     def append(self, name, text, remember=True):
         self.transcript.configure(state="normal")
         self.transcript.insert("end", name + "\n", name)
-        self.transcript.insert("end", text + "\n\n")
+        if name in CHARACTERS and text:
+            line = SpeechLine(text, time.monotonic())
+            self.delivery_id += 1
+            mark = 'speech_'+str(self.delivery_id)
+            self.transcript.mark_set(mark,'end-1c')
+            self.transcript.mark_gravity(mark,'left')
+            self.transcript.insert('end','\n\n')
+            self.transcript.mark_gravity(mark,'right')
+            self.deliveries.append({'name':name,'line':line,'mark':mark,'count':0})
+            self.speech_lines[name] = line
+        else:
+            self.transcript.insert("end", text + "\n\n")
         # Keep widgets and model context bounded even during long sessions.
         if int(self.transcript.index("end-1c").split(".")[0]) > 600:
             self.transcript.delete("1.0", "120.0")
@@ -220,8 +247,47 @@ class ScreenSquatters:
                     resident.gaze = (friend.x+95, friend.y+150)
             self.conversation.append({"speaker": name, "text": text[:2000]})
             self.conversation = self.conversation[-20:]
-        if name in CHARACTERS:
-            self.bubbles[name] = (text[:180], time.monotonic() + 18)
+        if name in CHARACTERS and text:
+            until = max(time.monotonic()+18, self.speech_lines[name].end+7)
+            self.bubbles[name] = (text,until)
+            self.speech_lines[name].bubble_until = until
+
+    def dialogue_tick(self, now=None):
+        now = time.monotonic() if now is None else now
+        if not self.deliveries:
+            return
+        self.transcript.configure(state='normal')
+        for delivery in list(self.deliveries):
+            visible = delivery['line'].visible(now)
+            if len(visible) > delivery['count']:
+                self.transcript.insert(delivery['mark'],visible[delivery['count']:])
+                delivery['count'] = len(visible)
+            if now >= delivery['line'].end:
+                self.transcript.mark_unset(delivery['mark'])
+                self.deliveries.remove(delivery)
+        self.transcript.configure(state='disabled')
+        self.transcript.see('end')
+
+    def bubble_state(self, name, now=None):
+        now = time.monotonic() if now is None else now
+        private = isinstance(self.game, Mafia) and self.game.phase == 'night' and not self.game.result
+        if private:
+            return '', False, False
+        if self.busy_name == name:
+            return '', True, False
+        text, until = self.bubbles[name]
+        if not text or until <= now:
+            return '', False, False
+        line = self.speech_lines.get(name)
+        if not line or line.text != text or getattr(line,'bubble_until',None) != until:
+            line = self.speech_lines[name] = SpeechLine(text,now)
+            until = max(until,line.end+7)
+            self.bubbles[name] = (text,until)
+            line.bubble_until = until
+        return line.page(now), line.typing(now), line.speaking(now)
+
+    def speech_pending(self):
+        return bool(self.deliveries)
 
     def note(self, text):
         self.append("House", text, False)
@@ -259,7 +325,7 @@ class ScreenSquatters:
                 energy = "Token usage hidden until Mafia ends"
             self.cards[name]["energy"].set(energy)
             win = self.floaters[name][0]
-            if resident.mode != "home":
+            if resident.mode != "home" and not isinstance(self.game,Poker):
                 win.deiconify()
             else:
                 win.withdraw()
@@ -363,7 +429,7 @@ class ScreenSquatters:
         self.house.stand_still = self.stand_still.get()
         for name, resident in self.world.residents.items():
             if resident.pending_speech:
-                self.bubbles[name] = (resident.pending_speech[:180], time.monotonic()+18)
+                self.bubbles[name] = (resident.pending_speech, time.monotonic()+18)
                 resident.pending_speech = ""
         self.world.freeze(self.stand_still.get())
         self.interest_sources.clear()
@@ -485,7 +551,7 @@ class ScreenSquatters:
                 if resident.mode in {"approaching", "interested"}:
                     resident.mode, resident.goal = "idle", None
                     if resident.pending_speech:
-                        self.bubbles[name] = (resident.pending_speech[:180], time.monotonic()+18)
+                        self.bubbles[name] = (resident.pending_speech, time.monotonic()+18)
                         resident.pending_speech = ""
 
     def clear_context(self):
@@ -622,6 +688,10 @@ class ScreenSquatters:
         self.previous_sleepers.clear()
         self.recovery_dirty = False
         self.bubbles = {name: ("", 0) for name in CHARACTERS}
+        self.speech_lines.clear()
+        for delivery in self.deliveries:
+            self.transcript.mark_unset(delivery['mark'])
+        self.deliveries.clear()
         self.transcript.configure(state="normal")
         self.transcript.delete("1.0", "end")
         self.transcript.configure(state="disabled")
@@ -632,6 +702,11 @@ class ScreenSquatters:
 
     def send(self):
         text = self.question.get().strip()[:2000]
+        if text.lower().strip(' .!') in ('poker', 'play poker', 'start poker', "let's play poker", 'lets play poker'):
+            self.question.delete(0,'end')
+            self.append('You',text)
+            self.start_poker()
+            return
         command = movie_command(text)
         if command:
             self.question.delete(0, "end")
@@ -660,13 +735,13 @@ class ScreenSquatters:
         self.next_turn = time.monotonic()
 
     def request_turn(self, name, trigger):
-        if self.busy or not self.key or not self.house.agents[name]["awake"]:
+        if self.busy or self.speech_pending() or not self.key or not self.house.agents[name]["awake"]:
             return
         self.busy, self.busy_name = True, name
         self.cancelled = threading.Event()
         self.send_button.configure(state="disabled")
         private_night = isinstance(self.game, Mafia) and self.game.phase == "night"
-        self.status.set("Secret night action in progress..." if private_night else name + " is thinking...")
+        self.status.set("Secret night action in progress..." if private_night else name + " is typing…")
         agent = self.house.agents[name]
         try:
             remaining = self.house.reserve(name)
@@ -787,14 +862,14 @@ class ScreenSquatters:
         elif self.autonomy.get():
             eligible = [name for name in CHARACTERS if self.house.remaining(name) > 0]
             for action, name in self.world.due(now, self.awake(), eligible, busy=[self.busy_name, *self.pending],
-                                               playing=bool(self.game and not self.game.result)):
+                                               playing=bool(self.game and (not self.game.result or isinstance(self.game, Poker)))):
                 if action == "wake":
                     self.toggle(name, automatic=True)
                 else:
                     self.sleep(name)
         self.validate_interests()
         self.capture_tick()
-        if not self.busy and self.key and now >= self.next_turn:
+        if not self.busy and not self.speech_pending() and self.key and now >= self.next_turn:
             if self.game and not self.game.result:
                 actor = self.game.actor
                 if actor in self.awake():
@@ -883,7 +958,7 @@ class ScreenSquatters:
             self.button(win, names[0] + " vs " + names[1] + " (watch)", lambda: (win.destroy(), self.start_ttt(*names[:2]))).pack(fill="x", padx=20, pady=8)
 
     def begin_game(self, game):
-        if self.busy:
+        if self.busy or self.speech_pending():
             self.note("Wait for the current turn before starting a game.")
             return
         if not self.key:
@@ -896,6 +971,7 @@ class ScreenSquatters:
             self.set_movie_mode(False, quiet=True)
         self.scene += 1
         self.pending.clear()
+        self.close_game_window()
         self.game = game
         self.next_turn = time.monotonic() + 1
         self.note(game.kind + " started. AI game turns use each player's token allowance.")
@@ -910,10 +986,30 @@ class ScreenSquatters:
             return
         self.begin_game(Mafia(["You", *CHARACTERS]))
 
+    def start_poker(self):
+        if self.busy or self.speech_pending():
+            self.note('Let the current speaker finish before dealing.')
+            return
+        if not self.key:
+            self.show_settings()
+            return
+        if any(not self.house.remaining(name) for name in CHARACTERS):
+            self.note('Everyone needs some energy for poker. Let them recover or refill their tokens.')
+            return
+        for name in CHARACTERS:
+            if name not in self.awake():
+                self.toggle(name)
+        self.begin_game(Poker(['You',*CHARACTERS]))
+
+    def next_poker_hand(self):
+        if isinstance(self.game,Poker) and self.game.result:
+            self.begin_game(Poker(['You',*CHARACTERS],dealer=self.game.dealer+1))
+
     def close_game_window(self):
         if self.game_window and self.game_window.winfo_exists():
             self.game_window.destroy()
         self.game_window = None
+        self.poker_table = None
 
     def cancel_game(self, reason="Game ended."):
         if self.game:
@@ -929,6 +1025,9 @@ class ScreenSquatters:
         try:
             if isinstance(self.game, TicTacToe):
                 self.game.move("You", value)
+            elif isinstance(self.game, Poker):
+                action, reveal = value if isinstance(value,tuple) else (value,False)
+                self.game.act('You',action,reveal=reveal is True)
             else:
                 self.game.act("You", value or "")
             self.next_turn = time.monotonic() + 1
@@ -946,6 +1045,12 @@ class ScreenSquatters:
                 move = legal[0]
                 self.note(name + " fumbled their move; the first open square was used.")
             self.game.move(name, move)
+        elif isinstance(self.game,Poker):
+            legal = self.game.legal_actions(name)
+            action = result.poker_action
+            if action not in legal:
+                action = 'check' if 'check' in legal else 'call' if 'call' in legal else 'fold'
+            self.game.act(name,action,reveal=result.reveal_cards)
         else:
             targets = [p for p in self.game.alive if p != name]
             target = result.vote if result.vote in targets else targets[0]
@@ -961,6 +1066,13 @@ class ScreenSquatters:
             self.game_window.protocol("WM_DELETE_WINDOW", self.cancel_game)
         win = self.game_window
         win.title("Screen Squatters | " + self.game.kind)
+        if isinstance(self.game,Poker):
+            if self.poker_table is None:
+                self.poker_table = PokerTable(self,win,draw_friend)
+            else:
+                self.poker_table.refresh()
+            self.announce_game_result()
+            return
         for widget in win.winfo_children():
             widget.destroy()
         self.label(win, self.game.kind).pack(padx=20, pady=10)
@@ -988,6 +1100,9 @@ class ScreenSquatters:
                         self.button(win, ("Eliminate " if self.game.phase == "night" else "Vote for ") + target,
                                     lambda value=target: self.game_action(value)).pack(fill="x", padx=20, pady=4)
         self.button(win, "Leave game", self.cancel_game).pack(pady=12)
+        self.announce_game_result()
+
+    def announce_game_result(self):
         if self.game.result and not getattr(self.game, "announced", False):
             self.game.announced = True
             self.append("House", self.game.result)
@@ -1036,7 +1151,10 @@ class ScreenSquatters:
         if self.closing:
             return
         self.frame += 1
+        self.dialogue_tick()
         self.habitat.frame()
+        if self.poker_table:
+            self.poker_table.animate()
         active = any(resident.mode != "home" for resident in self.world.residents.values())
         fading = abs(self.habitat.reveal-(1 if self.habitat.open else 0)) > .01
         self.root.after(40 if active or fading or self.habitat.hover else 250, self.animate)

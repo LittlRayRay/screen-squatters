@@ -29,6 +29,10 @@ Character animation, settings and page reception can be previewed without a key.
 
 They know they're AI companions. Their prompts emphasise social conversation and distinctive personalities rather than task completion. They have no tools to control your computer or browse independently.
 
+Conversation now has a short typing pause, animated typing dots and a gradual text reveal in both the chat and character bubbles. Text arrives at roughly 20–26 characters per second, with extra pauses at punctuation. Long bubbles continue across short pages; the full reply remains in chat. The next AI turn waits until the visible reply finishes. Filler-only model responses such as “hmm…” become silence. Typing animation itself uses no tokens. Casual speech prompts encourage contractions, short reactions and self-corrections while preserving each character's personality.
+
+The housemates have alternating steps, swinging arms, walking bounce, idle/sleep breathing, offset blinking and animated mouths/hand gestures while speaking. Speech bubbles have rounded corners, shadows, coloured name labels and bouncing typing dots. Stand still still freezes travel; expressive idle and talking animations remain.
+
 ## A life on the desktop
 
 Autonomous life starts enabled. Everyone initially sleeps inside; their first natural wake times are staggered 45–120 seconds after startup. Each housemate wanders at a leisurely pace, stays on the primary display, and normally rests after 4–8 minutes awake. Rest lasts roughly 90–210 seconds before an eligible housemate wakes again. Gemini can also decide to wander or rest during a conversation turn. Game participants defer their natural rest cycle until the game ends.
@@ -78,6 +82,16 @@ Memories, allowances and usage are saved in `.local/house.json`, which is exclud
 **Mafia:** wake all three. The four players are you, Burt, Byte and Rex, with one randomly assigned mafia member and three townsfolk. Everyone gets a discussion turn and a vote; ties eliminate nobody. At night the mafia secretly chooses one player to eliminate. The town wins by voting out the mafia; the mafia wins at parity. Eliminated players spectate. Your own role appears in the game window; each model receives only its own role. Night speech isn't published, and per-character token counters are hidden during Mafia to avoid revealing the actor. There are no doctor/detective roles in this four-player version.
 
 Speak in the living room or click pass during your discussion turn. Vote/choose a night target in the game window. Game inference uses each character's own allowance. Sending a player home or exhausting their budget ends the current game. An API error ends the game and pauses automatic hangout rather than retrying paid requests repeatedly.
+
+### Poker night
+
+Right-click the house → **Play a game → Poker night**, or type **“play poker”** in chat. With a working API connection and energy available, all three housemates wake and sit with you around an animated table. Their desktop bodies reappear when you leave. Ordinary wandering and natural rest pause while the table is open. Movie mode ends when poker begins.
+
+This is four-player **fixed-limit Texas hold'em with play chips**: two private cards each, a shared flop/turn/river, 5/10 blinds, bets of 10 before/on the flop and 20 on the turn/river, with up to three raises per street. Click **Fold**, **Check**, **Call** or **Bet/Raise** on your turn. The app enforces turn order and legal bets, evaluates the best five-card hand, and splits tied pots. Illegal model actions fall back to checking or calling. Each new hand starts everyone with 1,000 chips and rotates the dealer; stacks don't carry between hands, so there are no all-ins or side pots.
+
+Your own cards always appear to you. Each model gets only its own cards, the shared board, public actions and hands that have explicitly been shown. Each housemate decides whether to reveal its cards after its action, including a fold. Leave **Show my cards after my action** unchecked to keep yours private, check it before acting to reveal afterward, or click **Reveal my cards now**. A reveal is public for the rest of that hand and cannot be undone. Even at the end, the local engine can determine the winner without forcing anyone's cards face-up. You can still reveal afterward. **Deal next hand** clears all reveals and deals fresh cards.
+
+Only the public game result becomes a memory. Game state and hands aren't saved between app launches. AI decisions and banter use the normal token allowance; dealing, evaluation and animations are local. Generated speech is instructed to keep unrevealed cards private; this is a social companion prototype rather than an adversarial secure multiplayer service.
 
 ## Movie mode
 
@@ -149,7 +163,9 @@ node tests/extension.cjs
 python tests/ui_smoke.py
 ```
 
-Core tests cover budgets, sleep recovery, frozen movement, movie commands/seats/prompts, crash reservations, memory isolation, reset, game rules, role privacy, bridge authentication, stream ordering, metadata validation, snapshot selection and PNG encoding. Node tests use isolated Firefox API mocks for permissions, popup/background contracts, SPA navigation, continuous updates and text filtering. The UI smoke check uses a temporary house and random local port, mocks AI replies/movie frames, exercises games, movie mode and browser pause/late-message clearing, and captures only its own opaque conversation window to verify native PNG encoding. It closes its windows afterward. No live AI API calls are made by the tests.
+Core tests cover budgets, sleep recovery, frozen movement, movie commands/seats/prompts, crash reservations, memory isolation, reset, game rules, poker hand rankings/private views/optional reveals/chip conservation across 300 simulated hands, paced speech, role privacy, bridge authentication, stream ordering, metadata validation, snapshot selection and PNG encoding. Node tests use isolated Firefox API mocks for permissions, popup/background contracts, SPA navigation, continuous updates and text filtering. The UI smoke check uses a temporary house and random local port, mocks AI replies/movie frames, exercises games, movie mode, progressive transcript ordering, poker controls/reveals/redealing and browser pause/late-message clearing, and captures only its own opaque conversation window to verify native PNG encoding. It closes its windows afterward. No live AI API calls are made by the tests.
+
+`python tools/preview_social.py` renders poker and speech-bubble fixture previews into `.local/`. It asks only its own opaque test windows to paint themselves through Windows `PrintWindow`, checks process ownership, and does not capture the desktop or use live AI.
 
 `tests/firefox_live.py --web-ext-js PATH_TO_WEB_EXT_JS` additionally runs Mozilla's `web-ext` with installed Firefox in a disposable headless profile. It verifies real repeated updates while companions sleep, metadata/DOM changes, SPA navigation, visible captions, media state and private-field filtering against local fixture pages. It does not use your personal browser profile or Gemini key. Validate the extension with `web-ext lint --source-dir extension`.
 
