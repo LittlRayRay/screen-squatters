@@ -4,11 +4,13 @@ import ctypes
 from ctypes import wintypes as wt
 import math
 import os
+import queue
 import time
 
 DEFAULTS = {'window_awareness':True,'window_control':False,'window_idle_seconds':3,
             'window_cooldown':30,'window_actions_per_minute':3,'window_rules':{},
             'physics':True,'gravity':900,'bounce':.62,'scuffles':True,'scuffle_cooldown':90}
+DEFAULTS.update(playfulness=3,screen_comments=True,game_invites=True,autoplay_games=True,game_deliberation=True)
 
 
 def number(value, default, low, high):
@@ -28,13 +30,14 @@ def clean_options(value):
     result = dict(DEFAULTS,window_rules={})
     if not isinstance(value,dict):
         return result
-    for key in ('window_awareness','window_control','physics','scuffles'):
+    for key in ('window_awareness','window_control','physics','scuffles','screen_comments','game_invites','autoplay_games','game_deliberation'):
         if type(value.get(key)) is bool:
             result[key] = value[key]
     for key,low,high in [('window_idle_seconds',0,120),('window_cooldown',5,600),
                          ('window_actions_per_minute',1,30),('gravity',100,2400),
                          ('bounce',0,.9),('scuffle_cooldown',20,600)]:
         result[key] = number(value.get(key),result[key],low,high)
+    result['playfulness'] = int(number(value.get('playfulness'),3,0,3))
     rules = value.get('window_rules')
     if isinstance(rules,dict):
         result['window_rules'] = {path.casefold():clean_rule(rule) for path,rule in list(rules.items())[:200]
@@ -46,6 +49,9 @@ def clean_options(value):
 class NativeWindows:
     def __init__(self):
         self.available = os.name == 'nt'
+        self.hooks = []
+        self.native_events = queue.Queue()
+        self.hook_records = {}
         if not self.available:
             return
         from screen import _libraries
@@ -59,6 +65,7 @@ class NativeWindows:
             (self.user,'IsZoomed',[wt.HWND],wt.BOOL),
             (self.user,'GetClassNameW',[wt.HWND,wt.LPWSTR,ctypes.c_int],ctypes.c_int),
             (self.user,'GetWindow',[wt.HWND,wt.UINT],wt.HWND),
+            (self.user,'GetAncestor',[wt.HWND,wt.UINT],wt.HWND),
             (self.user,'GetWindowLongPtrW',[wt.HWND,ctypes.c_int],ctypes.c_ssize_t),
             (self.user,'SetWindowPos',[wt.HWND,wt.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wt.UINT],wt.BOOL),
             (self.user,'MonitorFromWindow',[wt.HWND,wt.DWORD],wt.HANDLE),
@@ -71,7 +78,7 @@ class NativeWindows:
             fn.argtypes,fn.restype = args,result
 
     def inspect(self, hwnd):
-        if not self.available or not self.user.IsWindowVisible(hwnd):
+        if not self.available or not self.user.IsWindowVisible(hwnd) or self.user.GetAncestor(hwnd,2) != hwnd:
             return None
         pid = wt.DWORD()
         self.user.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
@@ -134,7 +141,56 @@ class NativeWindows:
             return True
         if not self.user.EnumWindows(collect,0):
             raise OSError('Window enumeration unavailable')
+        self.hook_records.update({item['hwnd']:dict(item) for item in records})
         return records
+
+    def set_monitoring(self,enabled):
+        if not self.available:
+            return
+        if enabled and self.hooks:
+            return
+        self.user.UnhookWinEvent.argtypes,self.user.UnhookWinEvent.restype = [wt.HANDLE],wt.BOOL
+        for hook in self.hooks:
+            self.user.UnhookWinEvent(hook)
+        self.hooks = []
+        self.drain_events()
+        if not enabled:
+            self.hook_records.clear()
+            return
+        event_callback = ctypes.WINFUNCTYPE(None,wt.HANDLE,wt.DWORD,wt.HWND,wt.LONG,wt.LONG,wt.DWORD,wt.DWORD)
+        @event_callback
+        def receive(_hook,event,hwnd,object_id,child_id,_thread,_stamp):
+            if not hwnd or object_id != 0 or child_id != 0:
+                return
+            try:
+                if event in (0x8001,0x8003):
+                    if event==0x8003 and self.user.IsIconic(hwnd):
+                        return
+                    record = self.hook_records.pop(int(hwnd),None)
+                    kind = 'closed'
+                else:
+                    record = self.inspect(hwnd)
+                    kind = 'focused' if event == 3 else 'opened'
+                    if record:
+                        self.hook_records[int(hwnd)] = dict(record)
+                if record:
+                    self.native_events.put((kind,dict(record),time.monotonic()))
+            except (OSError,ValueError):
+                pass
+        self.event_callback = receive  # Keep the native callback alive for the hook lifetime.
+        self.user.SetWinEventHook.argtypes,self.user.SetWinEventHook.restype = [wt.DWORD,wt.DWORD,wt.HMODULE,event_callback,wt.DWORD,wt.DWORD,wt.DWORD],wt.HANDLE
+        for first,last in ((3,3),(0x8001,0x8003)):
+            hook = self.user.SetWinEventHook(first,last,None,receive,0,0,2)  # out-of-context, skip this process
+            if hook:
+                self.hooks.append(hook)
+
+    def drain_events(self):
+        events = []
+        try:
+            while True:
+                events.append(self.native_events.get_nowait())
+        except queue.Empty:
+            return events
 
     def idle_seconds(self):
         class LastInput(ctypes.Structure):
@@ -168,30 +224,86 @@ class WindowWorld:
         self.serial = 0
         self.seeded = False
         self.last_update = 0
+        self.changes = []
+        self.event_serial = 0
+        self.aliases = {}
+        self.closed_identities = set()
 
     def update(self, records):
+        self.changes = []
         self.last_update = time.monotonic()
         opened = []
-        old = {identity(item):key for key,item in self.windows.items()}
         updated = {}
         for item in records:
-            key = old.get(identity(item))
+            key = self.aliases.get(identity(item))
             if key is None:
                 self.serial += 1
                 key = 'w'+str(self.serial)
+                self.aliases[identity(item)] = key
+            if key not in self.windows:
+                self.closed_identities.discard(identity(item))
                 if self.seeded:
                     opened.append(key)
-                    self.events.append({'event':'opened','window':key,'record':dict(item),'time':time.monotonic()})
+                    self.emit({'event':'opened','window':key,'record':dict(item),'time':time.monotonic()})
             elif item['foreground'] and not self.windows[key]['foreground']:
-                self.events.append({'event':'focused','window':key,'record':dict(item),'time':time.monotonic()})
+                self.emit({'event':'focused','window':key,'record':dict(item),'time':time.monotonic()})
             updated[key] = dict(item,id=key)
         for key,item in self.windows.items():
             if key not in updated:
-                self.events.append({'event':'closed','window':key,'record':item,'time':time.monotonic()})
+                self.closed_identities.add(identity(item))
+                self.emit({'event':'closed','window':key,'record':item,'time':time.monotonic()})
                 self.anchors.pop(key,None)
         self.windows = updated
         self.seeded = True
         return opened
+
+    def emit(self,event):
+        self.event_serial += 1
+        event['event_id'] = f'native:{self.event_serial}'
+        self.events.append(event)
+        self.changes.append(event)
+
+    def native_change(self,kind,record,stamp):
+        key = self.aliases.get(identity(record))
+        if kind=='closed' and identity(record) in self.closed_identities:
+            return None
+        if key is None:
+            self.serial += 1
+            key = 'w'+str(self.serial)
+            self.aliases[identity(record)] = key
+        elif key in self.windows and (kind == 'opened' or (kind=='focused' and self.windows[key]['foreground'])):
+            return None
+        if kind == 'closed':
+            self.closed_identities.add(identity(record))
+            self.windows.pop(key,None)
+            self.anchors.pop(key,None)
+        else:
+            self.closed_identities.discard(identity(record))
+            if kind=='focused':
+                for item in self.windows.values():
+                    item['foreground'] = False
+                record = dict(record,foreground=True)
+            self.windows[key] = dict(record,id=key)
+        event = {'event':kind,'window':key,'record':dict(record),'time':stamp}
+        self.emit(event)
+        self.last_update = max(self.last_update,stamp)
+        return event
+
+    def play(self,name,rng,now=None):
+        candidates = [key for key,item in self.windows.items() if (self.public(key,item) or {}).get('allowed')]
+        rng.shuffle(candidates)
+        for key in candidates:
+            dx,dy = rng.choice((-12,-8,8,12)),rng.choice((-6,0,6))
+            if name == 'Mika':
+                dx,dy = 4,-4
+            elif name == 'Victoria':
+                dx,dy = rng.choice((-8,8)),0
+            action = {'target':key,'dx':dx,'dy':dy}
+            if self.rule(key)['control']=='resize' and name in ('Burt','Cody') and rng.random()<.2:
+                action['dw'] = rng.choice((-8,8))
+            if self.apply(action,now):
+                return key
+        return None
 
     def rule(self, key, record=None):
         record = record or self.windows.get(key,{})

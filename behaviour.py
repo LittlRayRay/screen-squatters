@@ -71,6 +71,9 @@ class Resident:
     vx: float = 0
     vy: float = 0
     spin: float = 0
+    picked_up: bool = False
+    impact_until: float = 0
+    impact_strength: float = 0
 
 
 class World:
@@ -87,6 +90,7 @@ class World:
         self.physics_enabled = True
         self.gravity = 900
         self.bounce = .62
+        self.table_players = set()
         self.residents = {name: Resident(*self.home, wake_at=now+self.rng.uniform(45, 120)) for name in names}
 
     def constrain(self, x, y):
@@ -116,6 +120,7 @@ class World:
 
     def rest(self, name, now, immediate=False):
         resident = self.residents[name]
+        resident.spin,resident.picked_up = 0,False
         resident.vx = resident.vy = 0
         resident.mode = "home" if immediate or not self.movement_enabled or resident.mode == "home" else "returning"
         resident.goal = self.constrain(*self.home)
@@ -129,6 +134,7 @@ class World:
         if not enabled:
             return
         for resident in self.residents.values():
+            resident.spin = 0
             resident.vx = resident.vy = 0
             resident.gaze = resident.interest = None
             resident.goal = None
@@ -149,6 +155,7 @@ class World:
 
     def seat(self, name, now, immediate=False):
         resident = self.residents[name]
+        resident.spin = 0
         resident.vx = resident.vy = 0
         resident.goal = self.seat_goal(name)
         resident.mode = "seated" if immediate else "settling"
@@ -170,7 +177,7 @@ class World:
 
     def inspect(self, name, point, now, speech=""):
         resident = self.residents[name]
-        if not self.movement_enabled or self.movie_enabled or resident.mode in {"home", "returning"}:
+        if not self.movement_enabled or self.movie_enabled or resident.picked_up or resident.mode in {"home", "returning", "airborne"}:
             return
         x, y, label = point
         # Stand beside a target, leaving the object itself uncovered.
@@ -188,6 +195,8 @@ class World:
             return []
         events = []
         for name, resident in self.residents.items():
+            if resident.picked_up or resident.mode == 'airborne':
+                continue
             if name in awake and name not in busy and now >= resident.rest_at:
                 events.append(("sleep", name))
             elif name not in awake and resident.mode == "home" and name in eligible and not resident.blocked and now >= resident.wake_at:
@@ -209,11 +218,11 @@ class World:
         excluded = {'home','returning','seated','settling','interested'}
         for i,name in enumerate(names):
             a = self.residents[name]
-            if a.mode in excluded or a.held_until > now:
+            if name in self.table_players or a.mode in excluded or a.held_until > now:
                 continue
             for other in names[i+1:]:
                 b = self.residents[other]
-                if b.mode in excluded or b.held_until > now:
+                if other in self.table_players or b.mode in excluded or b.held_until > now:
                     continue
                 dx,dy = b.x-a.x,b.y-a.y
                 distance = math.hypot(dx,dy)
@@ -229,6 +238,7 @@ class World:
                     a.vx,a.vy = a.vx-impulse*nx,a.vy-impulse*ny
                     b.vx,b.vy = b.vx+impulse*nx,b.vy+impulse*ny
                     for resident in (a,b):
+                        resident.impact_until,resident.impact_strength = now+.22,min(1,abs(approach)/1400)
                         if math.hypot(resident.vx,resident.vy)>30 and resident.mode != 'sparring':
                             resident.mode,resident.goal = 'airborne',None
 
@@ -244,8 +254,12 @@ class World:
         arrived = []
         dt = clamp(dt, 0, .15)
         for name, resident in self.residents.items():
-            if resident.mode == "home" or now < resident.held_until:
+            if name in self.table_players or resident.mode == "home" or now < resident.held_until:
                 continue
+            if resident.mode != 'airborne':
+                resident.spin = ((resident.spin+180)%360-180)*math.exp(-12*dt)
+                if abs(resident.spin)<.2:
+                    resident.spin = 0
             if resident.mode == 'airborne':
                 if not self.movement_enabled or not self.physics_enabled:
                     resident.mode,resident.vx,resident.vy = 'idle',0,0
@@ -254,8 +268,10 @@ class World:
                 nx,ny = resident.x+resident.vx*dt,resident.y+resident.vy*dt
                 resident.x,resident.y = self.constrain(nx,ny)
                 if resident.x != nx:
+                    resident.impact_until,resident.impact_strength = now+.22,min(1,abs(resident.vx)/1000)
                     resident.vx *= -self.bounce
                 if resident.y != ny:
+                    resident.impact_until,resident.impact_strength = now+.22,min(1,abs(resident.vy)/1000)
                     resident.vy *= -self.bounce
                     resident.vx *= .78
                     if abs(resident.vy)<45:
@@ -263,7 +279,7 @@ class World:
                         if abs(resident.vx)<25:
                             resident.mode,resident.vx = 'idle',0
                 resident.vx *= math.exp(-.3*dt)
-                resident.spin += resident.vx*dt*.12
+                resident.spin = (resident.spin+resident.vx*dt*.12+180)%360-180
                 continue
             if resident.mode == "idle" and self.movement_enabled and autonomous and not self.paused and not self.movie_enabled and now >= resident.next_wander:
                 resident.goal, resident.mode = self.destination(), "walking"

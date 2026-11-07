@@ -12,6 +12,7 @@ class Social:
 
     def context(self):
         return {'moods':dict(self.moods),'scuffles_allowed':self.options.get('scuffles',True),
+                'game_invitations_allowed':self.options.get('game_invites',True),'window_playfulness':self.options.get('playfulness',3),
                 'rule':'React to your friends by name, include quieter friends, and do not repeat their answers.'}
 
     def react(self,name,result,world,awake,now,allowed=True):
@@ -30,7 +31,7 @@ class Social:
         if now-self.last_scuffle < self.options.get('scuffle_cooldown',90):
             return None
         a,b = world.residents[name],world.residents[target]
-        if a.mode in ('home','returning','seated') or b.mode in ('home','returning','seated'):
+        if a.picked_up or b.picked_up or a.mode in ('home','returning','seated','airborne') or b.mode in ('home','returning','seated','airborne'):
             return None
         midpoint = ((a.x+b.x)/2,(a.y+b.y)/2)
         for index,resident in enumerate((a,b)):

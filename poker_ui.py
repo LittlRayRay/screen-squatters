@@ -30,6 +30,7 @@ class PokerTable:
         self.choice.pack(side='left')
         self.show = app.button(self.reveal_row,'Reveal my cards now',self.reveal)
         self.show.pack(side='left',padx=8)
+        self.join = app.button(self.reveal_row,'Join the next hand',app.request_join_game)
         self.events = tk.StringVar()
         tk.Label(window,textvariable=self.events,bg=BG,fg=MUTED,wraplength=690,font=('Segoe UI',9)).pack(pady=7)
         self.leave = app.button(window,'Leave table',app.cancel_game)
@@ -57,6 +58,9 @@ class PokerTable:
                 label = {'fold':'Fold','check':'Check','call':f'Call {game.current_bet-game.bets["You"]}',
                          'raise':f'{"Bet" if not game.current_bet else "Raise"} {game.increment}'}[action]
                 self.app.button(self.actions,label,lambda value=action:self.action(value),True).pack(side='left',padx=5)
+        if 'You' not in game.players:
+            self.choice.pack_forget(); self.show.pack_forget()
+            self.join.pack(side='left',padx=8)
         revealed = 'You' in game.revealed
         self.show.configure(state='disabled' if revealed else 'normal',text='Your cards are public' if revealed else 'Reveal my cards now')
         self.choice.configure(state='disabled' if revealed else 'normal')
@@ -79,7 +83,7 @@ class PokerTable:
         if not c.winfo_exists() or not game:
             return
         c.delete('all')
-        view = game.view('You')
+        view = game.view('You') if 'You' in game.players else game.public_view()
         c.create_oval(137,102,583,328,fill='#0d111c',outline='')
         c.create_oval(132,92,588,318,fill='#62463d',outline='#ad8870',width=4)
         c.create_oval(147,107,573,303,fill='#215b52',outline='#408378',width=2)
@@ -88,9 +92,12 @@ class PokerTable:
         self.cards(game.board,250,207)
         for i in range(len(game.board),5):
             rounded(c,250+i*45,207,290+i*45,263,radius=5,outline='#427d6e',fill='#245c52')
-        seats = {'You':(360,325,320,300),'Burt':(72,190,150,150),'Byte':(360,54,327,108),'Rex':(648,190,500,150)}
-        if len(game.players) == 5:
-            seats.update(Burt=(72,190,155,183),Byte=(240,48,207,125),Rex=(480,48,447,125),Mika=(648,190,500,183))
+        positions = [(360,325,320,300),(72,190,155,183),(360,48,327,125),(648,190,500,183)]
+        if len(game.players)==3:
+            positions = [positions[0],positions[1],positions[-1]]
+        elif len(game.players)==5:
+            positions = [positions[0],positions[1],(240,48,207,125),(480,48,447,125),positions[-1]]
+        seats = dict(zip(game.players,positions))
         latest = app.busy_name or max((name for name in CHARACTERS if app.bubble_state(name)[0]),
                                      key=lambda name:app.speech_lines[name].start,default=None)
         for player in game.players:
@@ -111,8 +118,8 @@ class PokerTable:
             self.cards(cards,cx,cy,small=True)
             if player in CHARACTERS:
                 text,typing,_speaking = app.bubble_state(player)
-                if (text or typing) and (len(game.players) == 4 or player == latest):
-                    bx,by = (275,0) if len(game.players) == 5 else {'Burt':(3,3),'Byte':(462,3),'Rex':(537,267)}[player]
+                if (text or typing) and player == latest:
+                    bx,by = (275,0) if len(game.players)==5 else (462,3)
                     speech_bubble(c,player,text,bx,by,width=175,color=color,typing=typing,phase=app.frame)
         c.create_text(360,400,text='Cards stay hidden unless their owner chooses to show them.',fill=MUTED,font=('Segoe UI',8))
         if self.canvas_height != 410:

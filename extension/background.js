@@ -8,6 +8,55 @@ let epoch = 0;
 let lastBadge = "";
 const sessionID = crypto.randomUUID();
 let sequence = 0;
+const knownTabs = new Map();
+const births = new Map();
+const tabEvents = [];
+let eventSequence = 0, sendingEvents = false;
+
+function tabMetadata(tab) {
+  if (!tab || tab.incognito) return null;
+  try {
+    const url = new URL(tab.url);
+    if (!/^https?:$/.test(url.protocol)) return {id: tab.id, title: "", url: "", rawURL: tab.url || ""};
+    url.search = ""; url.hash = ""; url.username = ""; url.password = "";
+    return {id: tab.id, title: String(tab.title || "").slice(0,160), url: url.href.slice(0,2048), rawURL: tab.url};
+  } catch {return {id: tab.id, title: "", url: "", rawURL: ""};}
+}
+
+async function flushTabEvents() {
+  if (sendingEvents) return;
+  sendingEvents = true;
+  try {
+    const saved = await browser.storage.local.get(["following","pairingCode"]);
+    if (!saved.following) {tabEvents.length = 0; return;}
+    while (tabEvents.length) {
+      const item = tabEvents[0];
+      await bridge("/browser-event",saved.pairingCode,item);
+      if (tabEvents[0] === item) tabEvents.shift();
+      if (!(await browser.storage.local.get("following")).following) {tabEvents.length = 0; break;}
+    }
+  } catch { /* Keep queued events and reconnect on the next page heartbeat/event. */ }
+  finally {sendingEvents = false;}
+}
+
+async function tabEvent(event, tab) {
+  const data = tabMetadata(tab);
+  if (!data || !(await browser.storage.local.get("following")).following) return;
+  tabEvents.push({event, event_id: `${sessionID}:${++eventSequence}`, title: data.title, url: data.url});
+  if (tabEvents.length>256) {
+    const firstByKind = new Map();
+    for (let i=sendingEvents ? 1 : 0;i<tabEvents.length;i++) {
+      const previous = firstByKind.get(tabEvents[i].event);
+      if (previous !== undefined) {
+        tabEvents[previous].count = (tabEvents[previous].count || 1)+(tabEvents[i].count || 1);
+        tabEvents[previous].title = ""; tabEvents[previous].url = "";
+        tabEvents.splice(i,1); break;
+      }
+      firstByKind.set(tabEvents[i].event,i);
+    }
+  }
+  await flushTabEvents();
+}
 
 async function setFeed(state, message, extra = {}) {
   feed = {...feed, ...extra, state, message};
@@ -66,6 +115,11 @@ async function configure(enabled) {
   await browser.storage.local.set({following: !!enabled});
   await browser.scripting.unregisterContentScripts({ids: [READER]}).catch(() => {});
   if (enabled) {
+    knownTabs.clear();
+    for (const tab of await browser.tabs.query({})) {
+      const data = tabMetadata(tab);
+      if (data) knownTabs.set(tab.id,data);
+    }
     await browser.scripting.registerContentScripts([{id: READER, matches: HOSTS,
       js: ["reader.js", "watch.js"], runAt: "document_idle", allFrames: false, persistAcrossSessions: true}]);
     await setFeed("waiting", "Live updates enabled. Focus a webpage to start.");
@@ -74,6 +128,7 @@ async function configure(enabled) {
     await Promise.allSettled(tabs.filter(tab => !tab.incognito).map(tab => browser.scripting.executeScript({target: {tabId: tab.id}, files: ["reader.js", "watch.js"]})));
     await sampleActive();
   } else {
+    tabEvents.length = 0;
     await bridge("/browser-state", saved.pairingCode, {state: "paused"}).catch(() => {});
     await setFeed("off", "Live updates paused. The desktop browser snapshot was cleared.");
   }
@@ -98,6 +153,7 @@ async function deliver(page, sender) {
     if (generation !== epoch || !await focusedTab(sender.tab.id)) return {ok: false};
     const result = await bridge("/page", saved.pairingCode, {...page, title: page.title.slice(0, 300), url: url.href,
       automatic: true, browser: "firefox", targets: Array.isArray(page.targets) ? page.targets.slice(0,12) : []});
+    flushTabEvents().catch(() => {});
     if (generation === epoch) await setFeed("live", "Updating the house continuously, including while companions sleep.", {title: page.title.slice(0, 120), last_sent: Date.now()});
     return {ok: true, characters: result.characters};
   } catch (error) {
@@ -118,8 +174,32 @@ browser.runtime.onMessage.addListener((message, sender) => {
   return undefined;
 });
 
-browser.tabs.onActivated.addListener(() => {epoch++; inactive("loading").then(sampleActive).catch(() => {});});
+browser.tabs.onCreated.addListener(tab => {
+  const data = tabMetadata(tab);
+  if (!data) return;
+  knownTabs.set(tab.id,data); births.set(tab.id,Date.now());
+  tabEvent("tab-opened",tab).catch(() => {});
+});
+browser.tabs.onRemoved.addListener(id => {
+  const old = knownTabs.get(id);
+  knownTabs.delete(id); births.delete(id);
+  if (old) tabEvent("tab-closed",old).catch(() => {});
+});
+browser.tabs.onActivated.addListener(info => {
+  epoch++; inactive("loading").then(sampleActive).catch(() => {});
+  browser.tabs.get(info.tabId).then(tab => {
+    const data = tabMetadata(tab);
+    if (data) knownTabs.set(tab.id,data);
+    if (data && Date.now()-(births.get(tab.id) || 0)>2000) return tabEvent("tab-switched",tab);
+  }).catch(() => {});
+});
 browser.tabs.onUpdated.addListener((id, changes, tab) => {
+  const old = knownTabs.get(id), data = tabMetadata(tab);
+  if (data) {
+    knownTabs.set(id,data);
+    if (changes.url && old && old.rawURL !== data.rawURL && Date.now()-(births.get(id) || 0)>2000)
+      tabEvent("page-changed",tab).catch(() => {});
+  }
   if (!tab.active) return;
   if (changes.status === "loading" || changes.url) {epoch++; inactive("loading").catch(() => {});}
   if (changes.status === "complete") sampleActive().catch(() => {});

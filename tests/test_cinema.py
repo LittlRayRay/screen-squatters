@@ -66,7 +66,7 @@ class RecoveryTests(unittest.TestCase):
 
 class MovieTests(unittest.TestCase):
     def setUp(self):
-        self.world = World(['Burt','Byte','Rex'], (0,0,1600,900), (1200,600), rng=random.Random(1))
+        self.world = World(['Burt','Cody','Victoria'], (0,0,1600,900), (1200,600), rng=random.Random(1))
 
     def test_normal_invites_and_menu_style_commands(self):
         for text in ("Everybody watch something with me", "Let's watch a movie", 'Can we watch this?', 'Movie mode', 'Start movie mode'):

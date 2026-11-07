@@ -9,17 +9,17 @@ def conversational_speech(text):
 
 
 class SpeechLine:
-    def __init__(self, text, start):
+    def __init__(self, text, start, fast=False):
         self.text = text
         self.start = start
         self.times = []
-        cursor = start+.55
+        cursor = start+(.12 if fast else .55)
         for i, char in enumerate(text):
-            cursor += .038 + (i % 4)*.004
+            cursor += (.014 if fast else .038) + (i % 4)*(.001 if fast else .004)
             if i and text[i-1] in '.!?':
-                cursor += .29
+                cursor += .06 if fast else .29
             elif i and text[i-1] in ',;:':
-                cursor += .13
+                cursor += .025 if fast else .13
             self.times.append(cursor)
         self.end = cursor
 

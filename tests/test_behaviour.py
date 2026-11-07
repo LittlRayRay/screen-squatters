@@ -10,7 +10,7 @@ from bridge import validate_page
 
 class WorldTests(unittest.TestCase):
     def setUp(self):
-        self.world = World(["Burt", "Byte", "Rex"], (0, 0, 1600, 900), (1200, 600), rng=random.Random(4))
+        self.world = World(["Burt", "Cody", "Victoria"], (0, 0, 1600, 900), (1200, 600), rng=random.Random(4))
 
     def advance(self, seconds=50):
         arrived = []
@@ -38,25 +38,25 @@ class WorldTests(unittest.TestCase):
     def test_rest_and_wake_cycles_respect_pause_budget_and_games(self):
         for resident in self.world.residents.values():
             resident.wake_at = 5
-        self.world.residents["Rex"].blocked = True
-        self.assertEqual(self.world.due(6, [], ["Burt", "Rex"]), [("wake", "Burt")])
+        self.world.residents["Victoria"].blocked = True
+        self.assertEqual(self.world.due(6, [], ["Burt", "Victoria"]), [("wake", "Burt")])
         self.world.wake("Burt", 6)
         self.world.residents["Burt"].rest_at = 7
         self.assertIn(("sleep", "Burt"), self.world.due(8, ["Burt"], ["Burt"]))
         self.assertEqual(self.world.due(8, ["Burt"], [], busy=["Burt"]), [])
         self.assertEqual(self.world.due(8, ["Burt"], ["Burt"], playing=True), [])
         self.world.paused = True
-        self.assertEqual(self.world.due(1000, [], ["Burt", "Byte"]), [])
+        self.assertEqual(self.world.due(1000, [], ["Burt", "Cody"]), [])
 
     def test_interest_approaches_beside_target_then_points(self):
-        self.world.wake("Byte", 0)
-        self.world.inspect("Byte", (600, 400, "a picture"), 0, "That picture!")
-        resident = self.world.residents["Byte"]
+        self.world.wake("Cody", 0)
+        self.world.inspect("Cody", (600, 400, "a picture"), 0, "That picture!")
+        resident = self.world.residents["Cody"]
         self.assertEqual(resident.mode, "approaching")
         self.assertEqual(resident.gaze, (600, 400))
         self.assertNotEqual(resident.goal, (600, 400))
         arrived = self.advance(8)
-        self.assertIn("Byte", arrived)
+        self.assertIn("Cody", arrived)
         self.assertEqual(resident.mode, "interested")
         self.assertEqual(resident.pending_speech, "That picture!")
 

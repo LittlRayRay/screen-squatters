@@ -168,7 +168,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if not self.authorized():
             self.reply(403, {"error": "Pairing code rejected. Copy it again from Home Settings."})
             return
-        if self.path not in ("/page", "/browser-state"):
+        if self.path not in ("/page", "/browser-state", "/browser-event"):
             self.reply(404, {"error": "Unknown endpoint"})
             return
         if self.headers.get_content_type() != "application/json":
@@ -184,7 +184,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self.reply(413, {"error": "Page payload is too large"})
                 return
             value = json.loads(self.rfile.read(length))
-            if self.path == "/browser-state":
+            if self.path == '/browser-event':
+                if not isinstance(value,dict) or value.get('event') not in ('tab-opened','tab-closed','tab-switched','page-changed'):
+                    raise ValueError('Invalid browser event')
+                if not isinstance(value.get('event_id'),str) or not re.fullmatch(r'[a-zA-Z0-9:_-]{1,100}',value['event_id']):
+                    raise ValueError('Invalid event identity')
+                count = value.get('count',1)
+                if type(count) is not int or not 1<=count<=1_000_000:
+                    raise ValueError('Invalid event count')
+                page = {'kind':'browser-event','source':'browser','event':value['event'],'event_id':value['event_id'],
+                        'title':value.get('title','')[:160] if isinstance(value.get('title',''),str) else '',
+                        'url':clean_url(value.get('url','')),'app':'Firefox','count':count,**feed_keys(value)}
+            elif self.path == "/browser-state":
                 if not isinstance(value, dict) or value.get("state") not in ("inactive", "blocked", "paused", "loading"):
                     raise ValueError("Invalid browser state")
                 page = {"kind": "browser-state", "state": value["state"], **feed_keys(value)}

@@ -24,6 +24,8 @@ from cinema import movie_command
 from window_world import WindowWorld, clean_options
 from social import Social, throw_velocity
 from desktop_settings import windows_panel, social_panel
+from attention import Attention, screen_remark
+from game_social import MINIMUM, KINDS, OFFERS, DECLINES, occasional_refusal
 from screen import browser_snapshot_matches, capture_window, foreground, make_noactivate
 
 BG, PANEL, FG, MUTED = "#171923", "#242738", "#f1edff", "#abaec7"
@@ -41,8 +43,23 @@ class ScreenSquatters:
         self.windows_busy = False
         self.windows_epoch = 0
         self.last_windows_poll = 0
+        self.last_hook_stamp = 0
         self.window_notice = False
         self.last_window_notice = 0
+        self.attention = Attention()
+        self.browser_paused = {}
+        self.user_epoch = 0
+        self.last_mischief = 0
+        self.next_game_offer = time.monotonic()+240
+        self.invitation = None
+        self.invite_window = None
+        self.deferred_game = None
+        self.last_deliberation = -1e9
+        self.last_reactor = -1
+        self.proposed_offer = None
+        self.join_next_game = False
+        self.autonomous_game = False
+        self.game_done_at = 0
         self.key = os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
         self.model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
         self.page = None
@@ -103,6 +120,7 @@ class ScreenSquatters:
         self.previous_sleepers = set()
         self.intent_contexts = {}
         self.interest_sources = {}
+        self.native_interests = {}
         self.hangout = tk.BooleanVar(value=True)
         self.recipient = tk.StringVar(value="Everyone")
         self.screen_enabled = tk.BooleanVar(value=False)
@@ -111,11 +129,12 @@ class ScreenSquatters:
         self.context_status = tk.StringVar(value="Screen capture OFF | no browser page shared")
         self.build_home()
         self.build_floaters()
-        self.note("Welcome home. Burt, Byte, Rex and Mika are asleep. Wake any combination of them; they can chat with you and with each other. Settings has your API key and browser pairing code.")
+        self.note("Welcome home. Burt, Cody, Victoria and Mika are asleep. Wake any combination of them; they can chat with you and with each other. Settings has your API key and browser pairing code.")
         if self.house.warning:
             self.note(self.house.warning)
         self.refresh()
         self.animate()
+        self.windows.backend.set_monitoring(self.house.options['window_awareness'])
         if timers:
             root.after(100, self.poll)
             root.after(500, self.tick)
@@ -164,18 +183,19 @@ class ScreenSquatters:
         self.chat.lift()
         self.question.focus_set()
 
-    def append(self, name, text, remember=True):
+    def append(self, name, text, remember=True, blocking=None):
         self.transcript.configure(state="normal")
         self.transcript.insert("end", name + "\n", name)
         if name in CHARACTERS and text:
-            line = SpeechLine(text, time.monotonic())
+            line = SpeechLine(text, time.monotonic(),fast=isinstance(self.game,Poker))
             self.delivery_id += 1
             mark = 'speech_'+str(self.delivery_id)
             self.transcript.mark_set(mark,'end-1c')
             self.transcript.mark_gravity(mark,'left')
             self.transcript.insert('end','\n\n')
             self.transcript.mark_gravity(mark,'right')
-            self.deliveries.append({'name':name,'line':line,'mark':mark,'count':0})
+            self.deliveries.append({'name':name,'line':line,'mark':mark,'count':0,
+                                    'blocking':not isinstance(self.game,Poker) if blocking is None else blocking})
             self.speech_lines[name] = line
         else:
             self.transcript.insert("end", text + "\n\n")
@@ -233,7 +253,7 @@ class ScreenSquatters:
         return line.page(now), line.typing(now), line.speaking(now)
 
     def speech_pending(self):
-        return bool(self.deliveries)
+        return any(delivery.get('blocking',True) for delivery in self.deliveries)
 
     def note(self, text):
         self.append("House", text, False)
@@ -272,7 +292,7 @@ class ScreenSquatters:
                 energy = "Token usage hidden until Mafia ends"
             self.cards[name]["energy"].set(energy)
             win = self.floaters[name][0]
-            if resident.mode != "home" and not isinstance(self.game,Poker):
+            if resident.mode != "home" and not (isinstance(self.game,Poker) and name in self.game.players):
                 win.deiconify()
             else:
                 win.withdraw()
@@ -408,7 +428,7 @@ class ScreenSquatters:
             self.world.movie_enabled = True
             self.world.movie_corner = self.movie_corner.get()
             self.world.paused = False
-            lines = {"Burt": "Umm, I've got popcorn. Wait, are we starting?", "Byte": "Movie night. I'll keep the commentary down.", "Rex": "Obviously I get the good seat.","Mika":"Shall we settle in? I've brought tea."}
+            lines = {"Burt": "Umm, I've got popcorn. Wait, are we starting?", "Cody": "Movie night. I'll keep the commentary down.", "Victoria": "Obviously I get the good seat.","Mika":"Shall we settle in? I've brought tea."}
             for name in CHARACTERS:
                 resident = self.world.residents[name]
                 if not self.house.agents[name]["awake"]:
@@ -451,9 +471,13 @@ class ScreenSquatters:
                     resident.wake_at = time.monotonic()+self.world.rng.uniform(20, 60)
 
     def apply_intent(self, name, result):
+        if result.activity in ('rest','wander','inspect'):
+            self.native_interests.pop(name,None)
         if self.movie_mode.get() or not self.autonomy.get() or not self.house.agents[name]["awake"]:
             return
         resident = self.world.residents[name]
+        if resident.picked_up or resident.mode == 'airborne':
+            return
         if result.activity == "rest":
             self.sleep(name)
         elif self.stand_still.get():
@@ -488,6 +512,18 @@ class ScreenSquatters:
         window = foreground()
         for name in active:
             resident = self.world.residents[name]
+            if name in self.native_interests:
+                key = self.native_interests[name]
+                item = self.windows.windows.get(key)
+                permitted = item and self.house.options['window_awareness'] and self.house.options['window_control'] and self.windows.rule(key)['observe']!='ignore' and self.windows.rule(key)['control']!='none'
+                if not permitted or time.monotonic()>resident.interest_until:
+                    resident.interest = resident.gaze = None
+                    resident.mode,resident.goal = 'idle',None
+                    self.native_interests.pop(name,None)
+                else:
+                    x,y = item['rect'][0]+20,item['rect'][1]+30
+                    resident.interest,resident.gaze = (x,y,'a permitted window'),(x,y)
+                continue
             snapshot = self.intent_contexts.get(name, ({}, 0))[0] or {}
             stale_page = snapshot.get("kind") == "page" and (
                 not browser_snapshot_matches(window, snapshot, 0) or
@@ -616,11 +652,17 @@ class ScreenSquatters:
             self.world.residents[name].blocked = False
         self.intent_contexts.clear()
         self.interest_sources.clear()
+        self.native_interests.clear()
         self.generation += 1
         self.scene += 1
         self.cancelled.set()
         self.pending.clear()
         self.game = None
+        self.dismiss_invitation()
+        self.deferred_game = None
+        self.join_next_game = False
+        self.attention.clear()
+        self.user_epoch += 1
         self.close_game_window()
         self.screen_enabled.set(False)
         self.awareness_changed()
@@ -659,6 +701,8 @@ class ScreenSquatters:
         self.windows.events.clear()
         self.windows_epoch += 1
         self.habitat.open = False
+        self.windows.backend.set_monitoring(False)
+        self.windows.backend.set_monitoring(self.house.options['window_awareness'])
         if getattr(self,'settings',None) and self.settings.winfo_exists():
             self.settings.destroy()
         self.transcript.configure(state="normal")
@@ -682,9 +726,6 @@ class ScreenSquatters:
             self.append("You", text)
             self.set_movie_mode(command == "start")
             return
-        if self.busy:
-            self.status.set("One housemate is still speaking. Try again when their turn finishes.")
-            return
         if not text:
             return
         if not self.awake():
@@ -695,28 +736,36 @@ class ScreenSquatters:
             return
         self.question.delete(0, "end")
         self.append("You", text)
+        self.user_epoch += 1
+        if self.deliveries:
+            self.dialogue_tick(max(item['line'].end for item in self.deliveries)+.01)
         if self.game and not self.game.result:
             if isinstance(self.game, Mafia) and self.game.phase == "discussion" and self.game.actor == "You":
                 self.game.act("You")
                 self.render_game()
+                return
             elif isinstance(self.game,Debate) and self.game.actor == 'You':
                 self.game.act('You',text)
                 self.render_game()
-            return
+                return
         names = self.awake()
         recipient = self.recipient.get()
         names.sort(key=lambda name:name.lower() not in text.lower())
         if recipient != 'Everyone' and recipient not in names:
             self.note(recipient+' is asleep. Wake them for a directed reply.')
         self.pending = deque([recipient] if recipient in names else names if recipient == "Everyone" else [])
+        if recipient == 'Everyone' and isinstance(self.game,Poker):
+            self.pending = deque(list(self.pending)[:1])
         self.next_turn = time.monotonic()
 
-    def request_turn(self, name, trigger):
+    def request_turn(self, name, trigger, direct=False, chat_only=False):
         if self.busy or self.speech_pending() or not self.key or not self.house.agents[name]["awake"]:
             return
         self.busy, self.busy_name = True, name
+        if direct and not trigger.startswith('PLAYER_MESSAGE'):
+            trigger = 'PLAYER_MESSAGE: '+trigger
         self.cancelled = threading.Event()
-        self.send_button.configure(state="disabled")
+        self.send_button.configure(state="normal")
         private_night = isinstance(self.game, Mafia) and self.game.phase == "night"
         self.status.set("Secret night action in progress..." if private_night else name + " is typing…")
         agent = self.house.agents[name]
@@ -731,7 +780,8 @@ class ScreenSquatters:
             self.note("Cannot safely save the token reservation. No AI request was sent.")
             return
         generation, scene = self.generation, self.scene
-        game = self.game.view(name) if self.game else None
+        reply_epoch = self.user_epoch
+        game = self.game.view(name) if self.game and name in self.game.players else self.game.public_view() if isinstance(self.game,Poker) else {'game':self.game.kind,'rule':'You are observing. React only to public chat; you have no private role or cards.'} if self.game else None
         if isinstance(self.game,Poker) and self.game.result:
             game = {'game':'Poker','result':self.game.result,'shown_cards':game['shown_cards'],
                     'rule':'The hand is over. React only to the public result; no betting or private cards.'}
@@ -744,6 +794,7 @@ class ScreenSquatters:
         def work():
             result = companion_turn(*args)
             result.game_turn = exempt
+            result.direct_reply,result.chat_only,result.reply_epoch = direct,chat_only,reply_epoch
             self.results.put(("turn", generation, scene, name, result))
         threading.Thread(target=work, daemon=True).start()
 
@@ -754,6 +805,8 @@ class ScreenSquatters:
             self.refresh()
             return
         active = self.house.agents[name]["awake"] and not self.cancelled.is_set() and scene == self.scene
+        if (not result.game_turn or result.chat_only) and result.reply_epoch>=0 and result.reply_epoch != self.user_epoch:
+            active = False
         self.house.settle(name, result.used, unlimited=result.game_turn)
         if result.error:
             self.note(name + ": " + result.error)
@@ -770,14 +823,22 @@ class ScreenSquatters:
                 self.cancel_game("Game ended: a player needs more tokens.")
         elif active:
             night = isinstance(self.game, Mafia) and self.game.phase == "night"
+            if isinstance(self.game,Poker) and not result.direct_reply:
+                new_reveal = result.reveal_cards and name not in self.game.revealed
+                real_raise = result.poker_action == 'raise' and 'raise' in self.game.legal_actions(name)
+                if not new_reveal and not real_raise and self.game.turn_number%4 != 0:
+                    result.speech = ''
+                result.speech = result.speech[:100]
             if result.speech and not night:
-                self.append(name, result.speech)
+                self.append(name, result.speech,blocking=True if result.direct_reply else None)
             ordinary = not self.game and not self.movie_mode.get()
             event = self.social.react(name,result,self.world,self.awake(),time.monotonic(),allowed=ordinary) if not night else None
             if event:
                 self.note(event)
-            if ordinary and result.window_action and self.windows.apply(result.window_action):
-                self.note(name+' requested a playful window move. Undo is available in Windows settings.')
+            if ordinary and result.window_action:
+                self.windows.apply(result.window_action)
+            if ordinary and result.game_offer.get('game') in KINDS and time.monotonic()>=self.next_game_offer and not self.pending:
+                self.proposed_offer = (name,result.game_offer['game'],str(result.game_offer.get('topic',''))[:300])
             target = result.social_action.get('target')
             if result.social_action.get('kind') == 'reply' and target in self.pending:
                 self.pending.remove(target)
@@ -789,8 +850,11 @@ class ScreenSquatters:
                 accepted = self.house.remember(name, result.memories)
                 for target, _text in accepted:
                     self.note(name + " left a note in " + target + "'s memory.")
-            if self.game and not self.game.result:
+            if self.game and not self.game.result and not result.chat_only:
                 self.apply_game_turn(name, result)
+            elif isinstance(self.game,Poker) and result.chat_only and result.reveal_cards and name in self.game.players:
+                self.game.reveal(name)
+                self.render_game()
         if not result.game_turn and not self.house.remaining(name) and self.game and not self.game.result:
             self.cancel_game("Game ended: a player ran out of tokens.")
         if active and not result.game_turn and not result.exhausted and not self.house.remaining(name):
@@ -800,7 +864,7 @@ class ScreenSquatters:
         self.save()
         self.refresh()
         self.status.set("All quiet at home." if not self.awake() else "Automatic conversation paused" if not self.hangout.get() else "Movie mode | watching quietly" if self.movie_mode.get() else "Hanging out")
-        self.next_turn = time.monotonic() + (2 if self.pending or (self.game and not self.game.result) else self.world.rng.uniform(60, 100) if self.movie_mode.get() else 25)
+        self.next_turn = time.monotonic() + (.15 if self.pending else .45 if isinstance(self.game,Poker) and not self.game.result else 2 if self.game and not self.game.result else self.world.rng.uniform(60, 100) if self.movie_mode.get() else 25)
 
     def capture_tick(self):
         now = time.monotonic()
@@ -847,6 +911,7 @@ class ScreenSquatters:
         cleaned = clean_options(values)
         self.house.options.clear()
         self.house.options.update(cleaned)
+        self.windows.backend.set_monitoring(self.house.options['window_awareness'])
         self.windows_epoch += 1
         self.last_windows_poll = 0
         if not self.house.options['window_awareness']:
@@ -867,8 +932,115 @@ class ScreenSquatters:
                 records = self.windows.backend.list_windows()
             except Exception:
                 records = None
-            self.results.put(('windows',epoch,records))
+            self.results.put(('windows',epoch,records,now))
         threading.Thread(target=collect,daemon=True).start()
+
+    def dismiss_invitation(self):
+        if self.invite_window and self.invite_window.winfo_exists():
+            self.invite_window.destroy()
+        self.invite_window,self.invitation = None,None
+
+    def offer_game(self,name,kind='Tic-tac-toe',topic=''):
+        if not self.house.options['game_invites'] or not self.key or self.game or self.invitation or len(self.awake())<2 or name not in self.awake():
+            return
+        self.next_game_offer = time.monotonic()+self.world.rng.uniform(600,1000)
+        self.invitation = {'starter':name,'kind':kind,'topic':topic,'deadline':time.monotonic()+25}
+        self.append(name,OFFERS[name].format(game=kind),blocking=False)
+        win = self.invite_window = tk.Toplevel(self.root)
+        win.title('Screen Squatters | game invitation')
+        win.configure(bg=BG)
+        self.label(win,name+' suggests '+kind).pack(padx=20,pady=12)
+        self.label(win,'Join in, watch, or leave it for later.').pack(padx=20)
+        if self.house.options['autoplay_games']:
+            self.label(win,'They will start without you after 25 seconds.').pack(padx=20,pady=4)
+        self.label(win,'Housemate games use API tokens without local game limits.').pack(padx=20,pady=6)
+        row = tk.Frame(win,bg=BG)
+        row.pack(padx=20,pady=12)
+        self.button(row,'Join',lambda:self.accept_invitation(True),True).pack(side='left',padx=4)
+        self.button(row,'Watch them play',lambda:self.accept_invitation(False)).pack(side='left',padx=4)
+        self.button(row,'Not now',self.dismiss_invitation).pack(side='left',padx=4)
+        win.protocol('WM_DELETE_WINDOW',self.dismiss_invitation)
+        win.update_idletasks()
+        make_noactivate(win.winfo_id())
+
+    def accept_invitation(self,join):
+        if not self.invitation:
+            return
+        offer = dict(self.invitation)
+        self.dismiss_invitation()
+        names = self.awake()
+        if offer['starter'] in names:
+            names.remove(offer['starter']); names.insert(0,offer['starter'])
+        players = (['You'] if join else [])+names
+        kind = offer['kind']
+        if len(players)<MINIMUM[kind]:
+            kind = 'Tic-tac-toe'
+        if len(players)<2:
+            return
+        if kind == 'Tic-tac-toe':
+            game = TicTacToe(*players[:2])
+        elif kind == 'Poker':
+            game = Poker(players)
+        elif kind == 'Mafia':
+            game = Mafia(players)
+        else:
+            game = Debate(players,offer['topic'] or 'What makes a good friend?')
+        self.autonomous_game = not join
+        self.begin_game(game)
+
+    def request_join_game(self):
+        self.join_next_game = True
+        self.note('You will join the next hand or game, after the current one finishes.')
+
+    def scene_tick(self,now):
+        if self.busy or self.pending or self.speech_pending():
+            return
+        if self.deferred_game:
+            game,self.deferred_game = self.deferred_game,None
+            self.begin_game(game)
+            return
+        if self.join_next_game and self.game and self.game.result:
+            self.join_next_game = False
+            kind,players,topic = self.game.kind,['You']+[p for p in self.game.players if p!='You'],getattr(self.game,'topic','')
+            self.autonomous_game = False
+            self.begin_game(Poker(players) if kind=='Poker' else Mafia(players) if kind=='Mafia' else Debate(players,topic) if kind=='Debate' else TicTacToe(*players[:2]),deliberate=False)
+            return
+        if self.invitation and not self.house.options['game_invites']:
+            self.dismiss_invitation()
+        if self.invitation and self.house.options['autoplay_games'] and now>=self.invitation['deadline']:
+            self.accept_invitation(False)
+            return
+        if self.autonomous_game and self.game and self.game.result and now-self.game_done_at>20:
+            self.cancel_game('The housemates put their game away.')
+        names = self.awake()
+        private = isinstance(self.game,Mafia) and self.game.phase=='night' and not self.game.result
+        if names and self.house.options['screen_comments'] and not private and now-self.attention.last_spoken>=3:
+            def allowed(event):
+                return event.get('source') != 'native' or (self.house.options['window_awareness'] and self.windows.public(event['window'],event['_record']) is not None)
+            changes = self.attention.take(allowed)
+            if changes:
+                self.last_reactor = (self.last_reactor+1)%len(names)
+                self.append(names[self.last_reactor],screen_remark(names[self.last_reactor],changes,self.world.rng),blocking=not isinstance(self.game,Poker))
+                self.attention.last_spoken = now
+                return
+        level = self.house.options['playfulness']
+        interval = {0:1e9,1:30,2:14,3:7}[level]
+        if names and not self.game and not self.movie_mode.get() and now-self.last_mischief>=interval:
+            self.last_mischief = now
+            actor = self.world.rng.choice(names)
+            key = self.windows.play(actor,self.world.rng,now) if level else None
+            if key and self.world.movement_enabled and self.autonomy.get():
+                item = self.windows.windows[key]
+                self.world.inspect(actor,(item['rect'][0]+20,item['rect'][1]+30,'a permitted window'),now)
+                self.native_interests[actor] = key
+        if names and not self.game and not self.movie_mode.get() and self.hangout.get() and now>=self.next_game_offer and len(names)>=2:
+            starter = self.world.rng.choice(names)
+            available = [kind for kind in KINDS if len(names)>=MINIMUM[kind]]
+            preferred = {'Burt':'Tic-tac-toe','Cody':'Tic-tac-toe','Victoria':'Poker','Mika':'Debate'}[starter]
+            kind = preferred if preferred in available and self.world.rng.random()<.7 else self.world.rng.choice(available)
+            offer = self.proposed_offer or (starter,kind,'')
+            self.proposed_offer = None
+            self.offer_game(*offer)
 
     def tick(self):
         if self.closing:
@@ -890,17 +1062,22 @@ class ScreenSquatters:
                     self.sleep(name)
         self.validate_interests()
         self.capture_tick()
+        self.scene_tick(now)
         if not self.busy and not self.speech_pending() and self.key and now >= self.next_turn:
-            if self.game and not self.game.result:
+            private = isinstance(self.game,Mafia) and self.game.phase=='night' and not self.game.result
+            while self.pending and self.pending[0] not in self.awake():
+                asleep = self.pending.popleft()
+                self.note(asleep+' needs to rest before replying. Their chat allowance can recover while they sleep.')
+            if self.pending and not private:
+                self.request_turn(self.pending.popleft(),'PLAYER_MESSAGE: Answer what the player just said before returning to other topics. Keep it brief and in character.',direct=True,chat_only=self.game is not None)
+            elif self.game and not self.game.result:
                 actor = self.game.actor
                 if actor in self.awake():
                     self.request_turn(actor, "Take your game turn. Respond to the ongoing banter without revealing secrets.")
             else:
                 while self.pending and self.pending[0] not in self.awake():
                     self.pending.popleft()
-                if self.pending:
-                    self.request_turn(self.pending.popleft(), "Respond to the user about what we're watching. Keep the movie focus." if self.movie_mode.get() else "React to the user and what your housemates just said. Don't repeat their answer.")
-                elif self.hangout.get() and self.awake():
+                if self.hangout.get() and self.awake():
                     ready = [name for name in self.awake() if not self.movie_mode.get() or self.world.residents[name].mode == "seated"]
                     if self.movie_mode.get() and not self.current_observation():
                         ready = []
@@ -918,15 +1095,35 @@ class ScreenSquatters:
                             break
         self.root.after(500, self.tick)
 
+    def queue_window_change(self,change):
+        public = self.windows.public(change['window'],change['record'])
+        if public:
+            self.attention.add({'event':{'opened':'window-opened','closed':'window-closed','focused':'window-switched'}[change['event']],
+                                'event_id':change['event_id'],'source':'native','window':change['window'],'_record':change['record'],
+                                'app':public['app'],'title':public.get('title','')})
+
     def poll(self, reschedule=True):
         if self.closing:
             return
+        for kind,record,stamp in self.windows.backend.drain_events():
+            if self.house.options['window_awareness']:
+                self.last_hook_stamp = max(self.last_hook_stamp,stamp)
+                change = self.windows.native_change(kind,record,stamp)
+                if change:
+                    self.queue_window_change(change)
         try:
             while True:
                 page = self.inbox.get_nowait()
+                if page.get('kind') == 'browser-event':
+                    if page.get('sequence',1)>self.browser_paused.get(page.get('session_id'),0) and page.get('session_id') not in self.browser_feed.retired:
+                        self.attention.add(page)
+                    continue
                 if not self.browser_feed.accept(page):
                     continue
                 if page.get("kind") == "browser-state":
+                    if page['state']=='paused':
+                        self.browser_paused[page.get('session_id')] = page.get('sequence',0)
+                        self.attention.clear('browser')
                     self.page, self.page_time = None, 0
                     if self.observation and self.observation.get("kind") == "page":
                         self.observation = None
@@ -946,8 +1143,10 @@ class ScreenSquatters:
                     self.handle_turn(*event[1:])
                 elif event[0] == 'windows':
                     self.windows_busy = False
-                    if event[1] == self.windows_epoch and self.house.options['window_awareness'] and event[2] is not None:
+                    if event[1] == self.windows_epoch and self.house.options['window_awareness'] and event[2] is not None and (len(event)<4 or event[3]>=self.last_hook_stamp):
                         opened = self.windows.update(event[2])
+                        for change in self.windows.changes:
+                            self.queue_window_change(change)
                         if any(self.windows.public(key,self.windows.windows[key]) for key in opened):
                             now = time.monotonic()
                             self.window_notice = now
@@ -994,13 +1193,26 @@ class ScreenSquatters:
         if len(names) >= 2:
             self.button(win, names[0] + " vs " + names[1] + " (watch)", lambda: (win.destroy(), self.start_ttt(*names[:2]))).pack(fill="x", padx=20, pady=8)
 
-    def begin_game(self, game):
+    def begin_game(self, game, deliberate=True):
         if self.busy or self.speech_pending():
-            self.note("Wait for the current turn before starting a game.")
+            self.deferred_game = game
+            self.note('The game is queued after this reply.')
             return
         if not self.key:
             self.show_settings()
             return
+        self.dismiss_invitation()
+        self.deferred_game = None
+        if deliberate and self.house.options['game_deliberation'] and time.monotonic()-self.last_deliberation>120:
+            self.last_deliberation = time.monotonic()
+            declined = occasional_refusal(game.players,game.kind,self.world.rng)
+            if declined:
+                self.append(declined,DECLINES[declined],blocking=False)
+                players = [player for player in game.players if player != declined]
+                if len(players)<MINIMUM[game.kind]:
+                    self.note('They would rather watch for now. You can invite them again later.')
+                    return
+                game = Poker(players) if isinstance(game,Poker) else Mafia(players) if isinstance(game,Mafia) else Debate(players,game.topic) if isinstance(game,Debate) else TicTacToe(*players)
         for player in game.players:
             if player in CHARACTERS and player not in self.awake():
                 self.house.wake(player,ignore_limit=True)
@@ -1017,14 +1229,18 @@ class ScreenSquatters:
         self.render_game()
 
     def start_ttt(self, first, second):
+        self.autonomous_game = False
         self.begin_game(TicTacToe(first, second))
 
     def start_mafia(self):
+        self.autonomous_game = False
         self.begin_game(Mafia(["You", *CHARACTERS]))
 
     def start_poker(self):
+        self.autonomous_game = False
         if self.busy or self.speech_pending():
-            self.note('Let the current speaker finish before dealing.')
+            self.deferred_game = Poker(['You',*CHARACTERS])
+            self.note('Poker is queued after this reply.')
             return
         if not self.key:
             self.show_settings()
@@ -1032,13 +1248,18 @@ class ScreenSquatters:
         self.begin_game(Poker(['You',*CHARACTERS]))
 
     def start_debate(self):
+        self.autonomous_game = False
         topic = simpledialog.askstring('Debate night','What should we debate?',parent=self.root)
         if topic and topic.strip():
             self.begin_game(Debate(['You',*CHARACTERS],topic.strip()))
 
     def next_poker_hand(self):
         if isinstance(self.game,Poker) and self.game.result:
-            self.begin_game(Poker(['You',*CHARACTERS],dealer=self.game.dealer+1))
+            players = list(self.game.players)
+            if self.join_next_game and 'You' not in players:
+                players.insert(0,'You')
+            self.join_next_game = False
+            self.begin_game(Poker(players,dealer=self.game.dealer+1),deliberate=False)
 
     def close_game_window(self):
         if self.game_window and self.game_window.winfo_exists():
@@ -1047,6 +1268,10 @@ class ScreenSquatters:
         self.poker_table = None
 
     def cancel_game(self, reason="Game ended."):
+        self.dismiss_invitation()
+        self.deferred_game = None
+        self.join_next_game = False
+        self.autonomous_game = False
         if self.game:
             self.scene += 1
             self.cancelled.set()
@@ -1139,7 +1364,7 @@ class ScreenSquatters:
                 self.button(win,'Pass this round',self.game_action).pack(pady=5)
         else:
             view = self.game.view("You")
-            self.label(win, "Your secret role: " + view["your_role"].upper()).pack(pady=8)
+            self.label(win, "Your secret role: " + view["your_role"].upper() if 'You' in self.game.players else 'Watching the housemates').pack(pady=8)
             self.label(win, "Alive: " + ", ".join(self.game.alive)).pack(padx=20)
             tk.Label(win, text="\n".join(self.game.events[-5:]), bg=BG, fg=MUTED, wraplength=430, justify="left").pack(padx=20, pady=12)
             if self.game.actor == "You":
@@ -1150,12 +1375,15 @@ class ScreenSquatters:
                     for target in view["targets"]:
                         self.button(win, ("Eliminate " if self.game.phase == "night" else "Vote for ") + target,
                                     lambda value=target: self.game_action(value)).pack(fill="x", padx=20, pady=4)
+        if 'You' not in self.game.players:
+            self.button(win,'Join the next game',self.request_join_game).pack(pady=5)
         self.button(win, "Leave game", self.cancel_game).pack(pady=12)
         self.announce_game_result()
 
     def announce_game_result(self):
         if self.game.result and not getattr(self.game, "announced", False):
             self.game.announced = True
+            self.game_done_at = time.monotonic()
             self.append("House", self.game.result)
             for name in self.game.players:
                 if name in CHARACTERS:
@@ -1168,6 +1396,8 @@ class ScreenSquatters:
         self.dragged = False
         self.drag_samples = deque([(time.monotonic(),event.x_root,event.y_root)],maxlen=8)
         self.world.residents[name].vx = self.world.residents[name].vy = 0
+        self.world.residents[name].picked_up = True
+        self.world.residents[name].spin = 0
         self.world.residents[name].held_until = float("inf")
 
     def drag_move(self, event, name):
@@ -1181,6 +1411,7 @@ class ScreenSquatters:
 
     def drag_end(self, event, name):
         resident = self.world.residents[name]
+        resident.picked_up = False
         resident.held_until = time.monotonic()+20
         if resident.mode != "returning":
             resident.mode, resident.goal = "seated" if self.movie_mode.get() else "idle", None
@@ -1223,6 +1454,7 @@ class ScreenSquatters:
         self.root.after(40 if active or fading or self.habitat.hover else 250, self.animate)
 
     def quit(self):
+        self.windows.backend.set_monitoring(False)
         self.recover_sleep_tick()
         self.closing = True
         self.cancelled.set()

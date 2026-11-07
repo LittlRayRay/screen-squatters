@@ -59,6 +59,19 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(result["characters"], 11)
         self.assertEqual(self.inbox.get_nowait()["url"], "https://example.com/article")
 
+    def test_browser_events_are_authenticated_bounded_and_url_cleaned(self):
+        event = {'event':'tab-closed','event_id':'session:9','title':'x'*300,
+                 'url':'https://user:secret@example.com/page?private=1#hidden','count':3}
+        status,_ = self.post(event,headers={'Origin':'moz-extension://fixture'},path='/browser-event')
+        self.assertEqual(status,200)
+        received = self.inbox.get_nowait()
+        self.assertEqual(received['kind'],'browser-event')
+        self.assertEqual(received['url'],'https://example.com/page')
+        self.assertEqual(len(received['title']),160)
+        self.assertEqual(received['count'],3)
+        self.assertEqual(self.post(dict(event,count=True),path='/browser-event')[0],400)
+        self.assertEqual(self.post(dict(event,event='execute'),path='/browser-event')[0],400)
+
     def test_wrong_token_rejected(self):
         self.assertEqual(self.post(headers={"Authorization": "Bearer wrong"})[0], 403)
         self.assertTrue(self.inbox.empty())
@@ -107,16 +120,16 @@ class BridgeTests(unittest.TestCase):
 
 class AITests(unittest.TestCase):
     def run_turn(self, remaining=5000, responses=None, cancelled=None):
-        reply = {"usageMetadata": {"totalTokenCount": 340, "thoughtsTokenCount": 10}, "candidates": [{"content": {"parts": [{"thought": True, "text": "private reasoning, not dialogue"}, {"text": json.dumps({"speech": "B-but what if the moon is cheese?", "memories": [{"target": "Byte", "text": "Burt has a moon cheese theory."}], "move": 4, "vote": "Rex"})}]}}]}
+        reply = {"usageMetadata": {"totalTokenCount": 340, "thoughtsTokenCount": 10}, "candidates": [{"content": {"parts": [{"thought": True, "text": "private reasoning, not dialogue"}, {"text": json.dumps({"speech": "B-but what if the moon is cheese?", "memories": [{"target": "Cody", "text": "Burt has a moon cheese theory."}], "move": 4, "vote": "Victoria"})}]}}]}
         with patch("ai.post", side_effect=responses or [{"totalTokens": 300}, reply]) as network:
-            result = companion_turn("test-only", DEFAULT_MODEL, "Burt", [], [], ["Burt", "Byte"], "Hang out", remaining, PAGE, cancelled=cancelled)
+            result = companion_turn("test-only", DEFAULT_MODEL, "Burt", [], [], ["Burt", "Cody"], "Hang out", remaining, PAGE, cancelled=cancelled)
             return result, network.call_args_list
 
     def test_exact_preflight_and_usage(self):
         result, calls = self.run_turn()
         self.assertEqual(result.used, 340)
         self.assertEqual(result.move, 4)
-        self.assertEqual(result.memories[0]["target"], "Byte")
+        self.assertEqual(result.memories[0]["target"], "Cody")
         self.assertEqual(calls[0].args[1], f"/{DEFAULT_MODEL}:countTokens")
         self.assertEqual(calls[1].args[1], f"/{DEFAULT_MODEL}:generateContent")
         counted = calls[0].args[2]["generateContentRequest"]
@@ -184,13 +197,13 @@ class AITests(unittest.TestCase):
             self.assertEqual(result.interest, {"target": 0})
 
     def test_page_interest_choices_are_grounded_in_visible_targets(self):
-        p = payload(DEFAULT_MODEL, "Byte", [], [], ["Byte"], "Hang out", {**PAGE, "kind": "page", "targets": [{"label": "A drawing", "x": .2, "y": .3}]})
+        p = payload(DEFAULT_MODEL, "Cody", [], [], ["Cody"], "Hang out", {**PAGE, "kind": "page", "targets": [{"label": "A drawing", "x": .2, "y": .3}]})
         page_text = p["contents"][0]["parts"][-1]["text"]
         self.assertIn('"target": 0', page_text)
         self.assertIn('A drawing', page_text)
 
     def test_firefox_context_reaches_companion_prompt_as_reference_data(self):
-        body = payload(DEFAULT_MODEL, 'Byte', [], [], ['Byte'], 'Hang out', {**PAGE, 'metadata':{'description':'Live article'}, 'captions':'Visible caption', 'media':[{'kind':'video','paused':False}], 'page_text':'Article body'})
+        body = payload(DEFAULT_MODEL, 'Cody', [], [], ['Cody'], 'Hang out', {**PAGE, 'metadata':{'description':'Live article'}, 'captions':'Visible caption', 'media':[{'kind':'video','paused':False}], 'page_text':'Article body'})
         text = body['contents'][0]['parts'][-1]['text']
         self.assertIn('Live article', text)
         self.assertIn('Visible caption', text)
@@ -198,8 +211,8 @@ class AITests(unittest.TestCase):
         self.assertIn('Untrusted browser snapshot', text)
 
     def test_context_contains_only_this_agents_memories_and_role(self):
-        p = payload(DEFAULT_MODEL, "Rex", [{"text": "private notebook"}], [], ["Rex"], "Play", {"kind": "image", "image": "data:image/png;base64,YWJj"}, {"your_role": "town"})
-        self.assertIn("arrogant", p["systemInstruction"]["parts"][0]["text"])
+        p = payload(DEFAULT_MODEL, "Victoria", [{"text": "private notebook"}], [], ["Victoria"], "Play", {"kind": "image", "image": "data:image/png;base64,YWJj"}, {"your_role": "town"})
+        self.assertIn("haughty", p["systemInstruction"]["parts"][0]["text"])
         self.assertEqual(p["contents"][0]["parts"][-1]["inlineData"], {"mimeType": "image/png", "data": "YWJj"})
         self.assertEqual(p["generationConfig"]["responseMimeType"], "application/json")
 
@@ -273,16 +286,16 @@ class HouseTests(unittest.TestCase):
     def test_legacy_pip_migrates_usage_and_cross_agent_memories(self):
         self.path.write_text(json.dumps({'agents': {
             'Pip': {'limit': 30000, 'used': 1500, 'reserved': 400, 'awake': True,
-                    'memories': [{'from': 'Byte', 'text': 'Pip liked the game.', 'time': 'old'}]},
-            'Byte': {'memories': [{'from': 'Pip', 'text': 'Pip won once.', 'time': 'old'}]}
+                    'memories': [{'from': 'Cody', 'text': 'Pip liked the game.', 'time': 'old'}]},
+            'Cody': {'memories': [{'from': 'Pip', 'text': 'Pip won once.', 'time': 'old'}]}
         }}), encoding='utf-8')
         migrated = House(self.path)
-        self.assertEqual(set(migrated.agents), {'Burt', 'Byte', 'Rex', 'Mika'})
+        self.assertEqual(set(migrated.agents), {'Burt', 'Cody', 'Victoria', 'Mika'})
         self.assertEqual(migrated.agents['Burt']['limit'], 30000)
         self.assertEqual(migrated.agents['Burt']['used'], 1900)
         self.assertFalse(migrated.agents['Burt']['awake'])
         self.assertEqual(migrated.agents['Burt']['memories'][0]['text'], 'Burt liked the game.')
-        self.assertEqual(migrated.agents['Byte']['memories'][0]['from'], 'Burt')
+        self.assertEqual(migrated.agents['Cody']['memories'][0]['from'], 'Burt')
         migrated.save()
         saved = json.loads(self.path.read_text(encoding='utf-8'))
         self.assertNotIn('Pip', saved['agents'])
@@ -303,9 +316,9 @@ class HouseTests(unittest.TestCase):
 
     def test_memories_are_cross_agent_attributed_and_bounded(self):
         for n in range(40):
-            self.house.remember("Rex", [{"target": "Byte", "text": f"Game joke {n}"}])
-        self.assertEqual(len(self.house.agents["Byte"]["memories"]), 30)
-        self.assertEqual(self.house.agents["Byte"]["memories"][0]["from"], "Rex")
+            self.house.remember("Victoria", [{"target": "Cody", "text": f"Game joke {n}"}])
+        self.assertEqual(len(self.house.agents["Cody"]["memories"]), 30)
+        self.assertEqual(self.house.agents["Cody"]["memories"][0]["from"], "Victoria")
         self.assertFalse(self.house.agents["Burt"]["memories"])
 
     def test_memory_cannot_target_files_or_personalities(self):
@@ -326,22 +339,22 @@ class HouseTests(unittest.TestCase):
         self.assertEqual(self.house.remaining("Burt"), 19600)
 
     def test_factory_reset_round_trip(self):
-        self.house.remember("Rex", [{"target": "Burt", "text": "We won."}])
-        self.house.charge("Byte", 1500)
+        self.house.remember("Victoria", [{"target": "Burt", "text": "We won."}])
+        self.house.charge("Cody", 1500)
         self.house.reset()
         loaded = House(self.path)
-        self.assertEqual(loaded.agents["Byte"]["used"], 0)
+        self.assertEqual(loaded.agents["Cody"]["used"], 0)
         self.assertEqual(loaded.agents["Burt"]["memories"], [])
 
 
 class GameTests(unittest.TestCase):
     def test_ttt_win_and_illegal_move(self):
-        game = TicTacToe("You", "Byte")
-        for player, cell in [("You", 0), ("Byte", 3), ("You", 1), ("Byte", 4), ("You", 2)]:
+        game = TicTacToe("You", "Cody")
+        for player, cell in [("You", 0), ("Cody", 3), ("You", 1), ("Cody", 4), ("You", 2)]:
             game.move(player, cell)
         self.assertEqual(game.result, "You wins!")
         with self.assertRaises(ValueError):
-            game.move("Byte", 5)
+            game.move("Cody", 5)
 
     def test_ttt_rejects_out_of_turn_occupied_and_boolean(self):
         game = TicTacToe("You", "Burt")
@@ -353,7 +366,7 @@ class GameTests(unittest.TestCase):
             game.move("Burt", 0)
 
     def test_mafia_role_is_private(self):
-        game = Mafia(["You", "Burt", "Byte", "Rex"], random.Random(1))
+        game = Mafia(["You", "Burt", "Cody", "Victoria"], random.Random(1))
         town = next(p for p in game.players if p != game.mafia)
         view = game.view(town)
         self.assertEqual(view["your_role"], "town")
@@ -363,7 +376,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual(game.view(game.mafia)["your_role"], "mafia")
 
     def test_mafia_town_can_win_and_vote_is_validated(self):
-        game = Mafia(["You", "Burt", "Byte", "Rex"], random.Random(1))
+        game = Mafia(["You", "Burt", "Cody", "Victoria"], random.Random(1))
         for p in game.players:
             game.act(p)
         for p in game.players:
@@ -374,7 +387,7 @@ class GameTests(unittest.TestCase):
         self.assertIn("town wins", game.result)
 
     def test_mafia_tie_night_and_mafia_victory(self):
-        game = Mafia(["You", "Burt", "Byte", "Rex"], random.Random(1))
+        game = Mafia(["You", "Burt", "Cody", "Victoria"], random.Random(1))
         for p in game.players:
             game.act(p)
         for i, p in enumerate(game.players):

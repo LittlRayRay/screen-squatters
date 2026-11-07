@@ -53,7 +53,7 @@ function backgroundFixture() {
     storage:{local:{get:async()=>({...saved}),set:async value=>Object.assign(saved,value)}},
     permissions:{contains:async()=>true,onRemoved:event()},
     action:{setBadgeText:async value=>badges.push(value.text),setBadgeBackgroundColor:async()=>{}},
-    tabs:{query:async()=>[active],sendMessage:async()=>{},onActivated:event(),onUpdated:event()},
+    tabs:{query:async()=>[active],get:async id=>({...active,id}),sendMessage:async()=>{},onCreated:event(),onRemoved:event(),onActivated:event(),onUpdated:event()},
     windows:{get:async()=>({focused}),onFocusChanged:event()},
     scripting:{executeScript:async()=>[],unregisterContentScripts:async()=>{},registerContentScripts:async()=>{}}
   };
@@ -150,6 +150,19 @@ async function watcherChecks() {
   await app.send({type:'focused-page',page},{...sender,tab:{...sender.tab,incognito:true}});
   await app.send({type:'focused-page',page:{...page,url:'https://forged.example/'}},sender);
   assert.equal(app.requests.length,length);
+  app.browser.tabs.onCreated.listeners[0]({id:8,url:'https://example.com/new?secret=1',title:'New page',incognito:false});
+  await flush();await flush();
+  app.browser.tabs.onRemoved.listeners[0](8);
+  await flush();await flush();
+  app.browser.tabs.onActivated.listeners[0]({tabId:1});
+  await flush();await flush();
+  const events=app.requests.filter(request=>request.url.endsWith('/browser-event'));
+  assert.deepEqual(events.map(request=>request.body.event),['tab-opened','tab-closed','tab-switched']);
+  assert.ok(events.every(request=>request.body.event_id && !JSON.stringify(request.body).includes('secret=')));
+  const eventCount=events.length;
+  app.browser.tabs.onCreated.listeners[0]({id:9,url:'https://private.example/',incognito:true});
+  app.browser.tabs.onRemoved.listeners[0](9);await flush();await flush();
+  assert.equal(app.requests.filter(request=>request.url.endsWith('/browser-event')).length,eventCount);
   assert.equal(app.send({type:'configure-stream',enabled:false},sender),undefined,'Content scripts cannot control pairing/stream settings');
   await app.send({type:'configure-stream',enabled:false});
   assert.equal(app.requests.at(-1).body.state,'paused');

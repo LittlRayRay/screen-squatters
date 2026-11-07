@@ -25,6 +25,7 @@ def windows_panel(app,parent):
     idle = tk.StringVar(value=str(options['window_idle_seconds']))
     cooldown = tk.StringVar(value=str(options['window_cooldown']))
     rate = tk.StringVar(value=str(options['window_actions_per_minute']))
+    playfulness = tk.StringVar(value=str(options['playfulness']))
     check(parent,'Share native window metadata with the housemates',enabled)
     check(parent,'Allow window play on explicitly permitted windows/apps',control)
     tk.Label(parent,text='Titles, app names and geometry only; no screenshots or window contents.\nSelected metadata may go to Gemini during normal conversation turns.',
@@ -32,11 +33,13 @@ def windows_panel(app,parent):
     spin(parent,'Wait for user idle (seconds)',idle,0,120)
     spin(parent,'Minimum cooldown per window (seconds)',cooldown,5,600)
     spin(parent,'Maximum actions per minute, across all agents',rate,1,30)
+    spin(parent,'Window play: 0 off · 1 relaxed · 2 playful · 3 eager',playfulness,0,3)
     def save_global():
         try:
             values = dict(options,window_awareness=enabled.get(),window_control=control.get(),
                           window_idle_seconds=float(idle.get()),window_cooldown=float(cooldown.get()),
                           window_actions_per_minute=int(rate.get()))
+            values['playfulness'] = int(playfulness.get())
         except ValueError:
             app.note('Enter numeric window limits.')
             return
@@ -131,6 +134,10 @@ def social_panel(app,parent):
     options = app.house.options
     physics = tk.BooleanVar(value=options['physics'])
     scuffles = tk.BooleanVar(value=options['scuffles'])
+    comments = tk.BooleanVar(value=options['screen_comments'])
+    invites = tk.BooleanVar(value=options['game_invites'])
+    autoplay = tk.BooleanVar(value=options['autoplay_games'])
+    deliberate = tk.BooleanVar(value=options['game_deliberation'])
     gravity = tk.StringVar(value=str(options['gravity']))
     bounce = tk.StringVar(value=str(options['bounce']))
     cooldown = tk.StringVar(value=str(options['scuffle_cooldown']))
@@ -139,12 +146,17 @@ def social_panel(app,parent):
     spin(parent,'Bounce (0 = soft, 0.9 = springy)',bounce,0,.9,.05)
     check(parent,'Allow playful cartoon scuffles when annoyed',scuffles)
     spin(parent,'Minimum time between scuffles (seconds)',cooldown,20,600,10)
+    check(parent,'Comment on every permitted tab/app open, close or switch',comments)
+    check(parent,'Let housemates occasionally invite me to their games',invites)
+    check(parent,'Let them start playing after an unanswered 25-second invite',autoplay)
+    check(parent,'Occasional deliberation: friends may choose to sit out',deliberate)
     tk.Label(parent,text='Drag a housemate and release while moving to throw them.\nStand still freezes travel and physics; manual dragging still works.\nScuffles are local cartoon bumps/stars, disabled during games and movies.',
              bg=BG,fg=MUTED,justify='left',wraplength=580).pack(anchor='w',pady=15)
     def save():
         try:
             updated = dict(options,physics=physics.get(),scuffles=scuffles.get(),gravity=float(gravity.get()),
                            bounce=float(bounce.get()),scuffle_cooldown=float(cooldown.get()))
+            updated.update(screen_comments=comments.get(),game_invites=invites.get(),autoplay_games=autoplay.get(),game_deliberation=deliberate.get())
         except ValueError:
             app.note('Enter numeric physics and social limits.')
             return

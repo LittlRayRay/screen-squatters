@@ -7,7 +7,7 @@ from ai import DEFAULT_MODEL, companion_turn
 from poker import Poker, best_hand, hand_rank
 from speech import SpeechLine, conversational_speech
 
-PLAYERS = ['You','Burt','Byte','Rex']
+PLAYERS = ['You','Burt','Cody','Victoria']
 
 
 class PokerTests(unittest.TestCase):
@@ -26,18 +26,18 @@ class PokerTests(unittest.TestCase):
     def test_blinds_turn_order_and_illegal_action_is_atomic(self):
         game = Poker(PLAYERS,rng=random.Random(1))
         self.assertEqual(game.pot,15)
-        self.assertEqual(game.actor,'Rex')
+        self.assertEqual(game.actor,'Victoria')
         before = json.dumps(game.view('You'))
         with self.assertRaises(ValueError):
             game.act('You','raise')
         self.assertEqual(before,json.dumps(game.view('You')))
         with self.assertRaises(ValueError):
-            game.act('Rex','check')
-        game.act('Rex','call')
+            game.act('Victoria','check')
+        game.act('Victoria','call')
         game.act('You','call')
         game.act('Burt','call')
-        self.assertEqual(game.actor,'Byte','Big blind retains the option to raise')
-        game.act('Byte','check')
+        self.assertEqual(game.actor,'Cody','Big blind retains the option to raise')
+        game.act('Cody','check')
         self.assertEqual(game.phase,'flop')
         self.assertEqual(len(game.board),3)
         self.assertEqual(game.actor,'Burt')
@@ -45,11 +45,11 @@ class PokerTests(unittest.TestCase):
 
     def test_raise_cap_and_players_must_respond_again(self):
         game = Poker(PLAYERS)
-        game.act('Rex','raise')
+        game.act('Victoria','raise')
         game.act('You','raise')
         game.act('Burt','raise')
-        self.assertNotIn('raise',game.legal_actions('Byte'))
-        for player in ['Byte','Rex','You']:
+        self.assertNotIn('raise',game.legal_actions('Cody'))
+        for player in ['Cody','Victoria','You']:
             self.assertEqual(game.actor,player)
             game.act(player,'call')
         self.assertEqual(game.phase,'flop')
@@ -58,16 +58,16 @@ class PokerTests(unittest.TestCase):
 
     def test_fold_win_and_optional_reveal_including_after_finish(self):
         game = Poker(PLAYERS)
-        for player in ['Rex','You','Burt']:
+        for player in ['Victoria','You','Burt']:
             game.act(player,'fold')
-        self.assertIn('Byte wins',game.result)
-        self.assertEqual(game.stacks['Byte'],1005)
+        self.assertIn('Cody wins',game.result)
+        self.assertEqual(game.stacks['Cody'],1005)
         self.assertIsNone(game.actor)
         self.assertEqual(game.view('You')['shown_cards'],{})
-        game.reveal('Rex')
-        self.assertEqual(game.view('You')['shown_cards']['Rex'],game.hands['Rex'])
+        game.reveal('Victoria')
+        self.assertEqual(game.view('You')['shown_cards']['Victoria'],game.hands['Victoria'])
         with self.assertRaises(ValueError):
-            game.act('Byte','check')
+            game.act('Cody','check')
 
     def test_private_views_and_reveal_after_action(self):
         game = Poker(PLAYERS,rng=random.Random(8))
@@ -80,8 +80,8 @@ class PokerTests(unittest.TestCase):
                 if other != player:
                     for card in game.hands[other]:
                         self.assertNotIn('"'+card+'"',raw)
-        game.act('Rex','call',reveal=True)
-        self.assertEqual(game.view('Burt')['shown_cards'],{'Rex':game.hands['Rex']})
+        game.act('Victoria','call',reveal=True)
+        self.assertEqual(game.view('Burt')['shown_cards'],{'Victoria':game.hands['Victoria']})
         game.view('You')['your_cards'].clear()
         self.assertEqual(len(game.hands['You']),2)
 
@@ -118,7 +118,7 @@ class PokerTests(unittest.TestCase):
             reply = {'usageMetadata':{'totalTokenCount':180},'candidates':[{'content':{'parts':[{'text':json.dumps(
                 {'speech':'I am calling.','poker_action':'call','reveal_cards':reveal})}]}}]}
             with patch('ai.post',side_effect=[{'totalTokens':100},reply]):
-                result = companion_turn('test',DEFAULT_MODEL,'Rex',[],[],PLAYERS,'Play',1000,game=Poker(PLAYERS).view('Rex'))
+                result = companion_turn('test',DEFAULT_MODEL,'Victoria',[],[],PLAYERS,'Play',1000,game=Poker(PLAYERS).view('Victoria'))
             self.assertEqual(result.poker_action,'call')
             self.assertEqual(result.reveal_cards,expected)
 

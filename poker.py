@@ -39,8 +39,8 @@ class Poker:
     kind = 'Poker'
 
     def __init__(self, players, rng=None, dealer=0):
-        if not 4 <= len(players) <= 6 or len(set(players)) != len(players):
-            raise ValueError('Poker needs four to six different players')
+        if not 3 <= len(players) <= 6 or len(set(players)) != len(players):
+            raise ValueError('Poker needs three to six different players')
         self.players = list(players)
         self.dealer = dealer % len(players)
         self.deck = [rank+suit for rank in '23456789TJQKA' for suit in 'CDHS']
@@ -58,6 +58,7 @@ class Poker:
         self.awarded_pot = 0
         self.phase = 'preflop'
         self.result = ''
+        self.turn_number = 0
         self.raises = 0
         self.current_bet = 10
         small, big = self.clockwise(self.dealer)[:2]
@@ -103,6 +104,7 @@ class Poker:
     def act(self, player, action, reveal=False):
         if action not in self.legal_actions(player):
             raise ValueError('Not a legal poker action')
+        self.turn_number += 1
         self.pending.pop(0)
         due = self.current_bet-self.bets[player]
         if action == 'fold':
@@ -153,6 +155,9 @@ class Poker:
         self.phase = 'finished'
         self.pending = []
         self.events.append(self.result)
+
+    def public_view(self):
+        return {key:value for key,value in self.view(self.players[0]).items() if key not in ('your_cards','to_call','legal_actions')}
 
     def view(self, player):
         if player not in self.players:

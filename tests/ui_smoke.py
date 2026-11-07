@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+import threading
+from types import SimpleNamespace
 import tkinter as tk
 from unittest.mock import patch
 
@@ -21,6 +23,8 @@ root = tk.Tk()
 app = ScreenSquatters(root, data_dir=temporary.name, port=0, timers=False)
 app.key = "test-only"
 app.house.options["window_awareness"] = False
+app.house.options.update(game_deliberation=False,game_invites=False,autoplay_games=False,screen_comments=False)
+app.windows.backend.set_monitoring(False)
 
 def pump():
     for _ in range(12):
@@ -70,17 +74,70 @@ try:
                    'automatic':True,'session_id':session,'sequence':2})
     pump()
     assert app.page is None and app.observation is None, 'Pausing clears context and rejects late page updates'
-    with patch("desktop.companion_turn", return_value=Turn(speech="B-but I thought the moon was cheese!", used=500, memories=[{"target": "Byte", "text": "Burt thinks the moon is cheese."}])):
+    with patch("desktop.companion_turn", return_value=Turn(speech="B-but I thought the moon was cheese!", used=500, memories=[{"target": "Cody", "text": "Burt thinks the moon is cheese."}])):
         app.request_turn("Burt", "Hang out")
         pump()
     assert app.house.agents["Burt"]["used"] == 500
-    assert app.house.agents["Byte"]["memories"][0]["from"] == "Burt"
-    assert 'moon was cheese' not in app.transcript.get('1.0','end'), 'Speech should begin with a typing pause'
+    assert app.house.agents["Cody"]["memories"][0]["from"] == "Burt"
+    app.append('Burt','Wait, the player is here.')
+    assert 'Wait, the player is here.' not in app.transcript.get('1.0','end'), 'Fresh speech begins with a typing pause'
     app.append('You','I am listening.')
     finish_speech()
     assert "moon was cheese" in app.transcript.get("1.0", "end")
     transcript = app.transcript.get('1.0','end')
     assert transcript.index('moon was cheese') < transcript.index('I am listening.'), 'Typewriter text must stay with its original message'
+    assert transcript.index('Wait, the player is here.') < transcript.index('I am listening.')
+    # A player message is accepted during inference and takes priority over the old ambient reply.
+    release = threading.Event()
+    def delayed_turn(*_args):
+        release.wait(5)
+        return Turn(speech='STALE AMBIENT REPLY',used=30)
+    with patch('desktop.companion_turn',side_effect=delayed_turn):
+        app.request_turn('Burt','Ambient conversation')
+        app.show_chat('Cody')
+        app.question.insert(0,'Cody, what do you think?')
+        app.send()
+        assert list(app.pending) == ['Cody'] and app.busy
+        assert app.send_button.cget('state') == 'normal'
+        release.set()
+        pump()
+    assert 'STALE AMBIENT REPLY' not in app.transcript.get('1.0','end')
+    def player_reply(*args):
+        assert args[6].startswith('PLAYER_MESSAGE')
+        assert args[4][-1]['text'] == 'Cody, what do you think?'
+        return Turn(speech='Oh! I think we should try it.',used=40)
+    app.next_turn = 0
+    with patch('desktop.companion_turn',side_effect=player_reply):
+        with patch.object(app.root,'after'),patch.object(app,'capture_tick'):
+            app.tick()
+        pump()
+    finish_speech()
+    assert 'I think we should try it' in app.transcript.get('1.0','end')
+    pickup = SimpleNamespace(x_root=300,y_root=300)
+    app.world.residents['Victoria'].spin = 130
+    app.drag_start(pickup,'Victoria')
+    assert app.world.residents['Victoria'].picked_up and app.world.residents['Victoria'].spin == 0
+    app.drag_end(pickup,'Victoria')
+    assert not app.world.residents['Victoria'].picked_up
+    # Local permitted-window gestures survive normal foreground checks and stop on revocation.
+    from test_desktop_world import record
+    from window_world import clean_rule
+    app.windows.update([record()])
+    target = next(iter(app.windows.windows))
+    app.windows.overrides[target] = clean_rule({'control':'nudge'})
+    app.house.options['window_control'] = True
+    app.house.options['window_awareness'] = True
+    app.last_mischief = 0
+    with patch.object(app.windows,'play',return_value=target),patch.object(app.world.rng,'choice',return_value='Cody'):
+        app.scene_tick(time.monotonic())
+    with patch('desktop.foreground',return_value=None):
+        app.validate_interests()
+    assert app.world.residents['Cody'].interest is not None
+    app.windows.overrides[target] = clean_rule({'observe':'ignore'})
+    app.validate_interests()
+    assert app.world.residents['Cody'].interest is None
+    app.house.options['window_control'] = False
+    app.house.options['window_awareness'] = False
     # Freeze translations without disabling chat, wake/sleep or manual placement.
     app.stand_still.set(True)
     app.stand_still_changed()
@@ -136,10 +193,10 @@ try:
     with patch('desktop.foreground', return_value={'hwnd':456,'bounds':[0,0,800,600]}):
         app.validate_interests()
     assert app.world.residents['Burt'].interest is None
-    app.start_ttt("You", "Byte")
+    app.start_ttt("You", "Cody")
     app.game_action(0)
     with patch("desktop.companion_turn", return_value=Turn(speech="Centre square, obviously.", used=400, move=4)):
-        app.request_turn("Byte", "Play")
+        app.request_turn("Cody", "Play")
         pump()
     assert app.game.board[4] == "O"
     finish_speech()
@@ -166,7 +223,7 @@ try:
     assert isinstance(app.game,Poker) and app.poker_table is not None
     assert all(not win.winfo_viewable() for win,_ in app.floaters.values()), 'Housemates sit at the table instead of appearing twice'
     with patch('desktop.companion_turn',return_value=Turn(speech='Fine, I call.',used=100,poker_action='call',reveal_cards=True)):
-        app.request_turn('Rex','Play poker')
+        app.request_turn('Victoria','Play poker')
         pump()
     assert app.game.actor == 'Mika'
     finish_speech()
@@ -174,17 +231,29 @@ try:
         app.request_turn('Mika','Play poker')
         pump()
     assert app.game.actor == 'You'
-    assert app.game.view('Burt')['shown_cards'] == {'Rex':app.game.hands['Rex']}
+    assert app.game.view('Burt')['shown_cards'] == {'Victoria':app.game.hands['Victoria']}
     assert not app.busy, 'Poker AI turn finishes before the user acts'
     app.poker_table.reveal_on_action.set(True)
     app.poker_table.action('call')
     assert 'You' in app.game.revealed
     finish_speech()
+    before_bet = app.game.current_bet
+    app.show_chat('Burt')
+    app.question.insert(0,'Burt, are you enjoying this?')
+    app.send()
+    app.next_turn = 0
+    with patch('desktop.companion_turn',return_value=Turn(speech='Umm, yes! I think so.',used=20,poker_action='raise',reveal_cards=True)):
+        with patch.object(app.root,'after'),patch.object(app,'capture_tick'):
+            app.tick()
+        pump()
+    finish_speech()
+    assert app.game.actor == 'Burt' and app.game.current_bet == before_bet, 'A direct poker chat reply must not submit a betting action'
+    assert 'Burt' in app.game.revealed, 'A voluntary reveal in poker chat is allowed without betting'
     with patch('desktop.companion_turn',return_value=Turn(used=100,poker_action='invalid',reveal_cards=False)):
         app.request_turn('Burt','Play poker')
         pump()
-    assert app.game.actor == 'Byte', 'An invalid model action uses a safe legal fallback'
-    assert 'Burt' not in app.game.revealed
+    assert app.game.actor == 'Cody', 'An invalid model action uses a safe legal fallback'
+    assert 'Burt' in app.game.revealed
     for widget in app.game_window.winfo_children():
         assert widget.winfo_viewable(), 'Poker controls must be visible'
         assert widget.winfo_rooty()+widget.winfo_height() <= app.game_window.winfo_rooty()+app.game_window.winfo_height()+1, 'Poker controls must fit in the window'
@@ -200,6 +269,50 @@ try:
     pump()
     assert app.poker_table is None
     assert all(win.winfo_viewable() for win,_ in app.floaters.values())
+    # Housemate-only poker exposes no private cards and the player can join the next hand.
+    app.house.options['game_invites'] = True
+    app.offer_game('Cody','Poker')
+    assert app.invitation and app.invite_window.winfo_exists()
+    app.accept_invitation(False)
+    pump()
+    assert 'You' not in app.game.players and len(app.game.players)==4
+    assert not app.poker_table.show.winfo_viewable() and app.poker_table.join.winfo_viewable()
+    while not app.game.result:
+        actor = app.game.actor
+        app.game.act(actor,'check' if 'check' in app.game.legal_actions(actor) else 'call')
+    app.render_game()
+    app.request_join_game()
+    app.scene_tick(time.monotonic())
+    assert 'You' in app.game.players and len(app.game.players)==5
+    app.cancel_game()
+    finish_speech()
+    app.house.options['game_deliberation'] = True
+    app.last_deliberation = -1e9
+    with patch('desktop.occasional_refusal',return_value='Victoria'):
+        app.start_poker()
+    pump()
+    assert 'Victoria' not in app.game.players
+    assert app.floaters['Victoria'][0].winfo_viewable(), 'A friend who sits out stays on the desktop'
+    app.cancel_game()
+    app.house.options.update(game_deliberation=False,game_invites=False)
+    finish_speech()
+    app.house.options.update(game_invites=True,autoplay_games=True)
+    app.offer_game('Cody','Tic-tac-toe')
+    app.invitation['deadline'] = time.monotonic()-1
+    app.scene_tick(time.monotonic())
+    assert app.game and 'You' not in app.game.players and app.autonomous_game
+    assert app.invitation is None
+    app.cancel_game()
+    app.house.options.update(game_invites=False,autoplay_games=False)
+    finish_speech()
+    app.house.options['screen_comments'] = True
+    app.attention.add({'event':'tab-opened','event_id':'fixture-open','source':'browser'})
+    app.attention.add({'event':'tab-closed','event_id':'fixture-close','source':'browser'})
+    app.scene_tick(time.monotonic()+5)
+    assert not app.attention.pending
+    finish_speech()
+    assert 'tabs opened' in app.transcript.get('1.0','end') and 'tabs closed' in app.transcript.get('1.0','end')
+    app.house.options['screen_comments'] = False
     # Games still run after the local chat allowance is spent, and record separate usage.
     app.house.agents['Burt']['used'] = app.house.agents['Burt']['limit']
     app.house.sleep('Burt')
@@ -229,7 +342,7 @@ try:
     with patch('desktop.companion_turn',return_value=Turn(speech='Umm, what vegetables?',used=100)):
         app.request_turn('Burt','Debate')
         pump()
-    assert app.game.actor == 'Byte'
+    assert app.game.actor == 'Cody'
     finish_speech()
     app.cancel_game()
     app.house.recharge('Burt',20000)
@@ -295,12 +408,12 @@ try:
     with patch("desktop.messagebox.askyesno", return_value=True):
         app.reset_all()
     assert app.generation > old_generation
-    assert not app.house.agents["Byte"]["memories"]
+    assert not app.house.agents["Cody"]["memories"]
     assert app.house.agents["Burt"]["used"] == 0
     app.handle_turn(old_generation, 0, "Burt", Turn(speech="STALE REPLY", used=500))
     assert "STALE REPLY" not in app.transcript.get("1.0", "end")
     assert app.house.agents["Burt"]["used"] == 0
-    print("UI smoke passed: compact/expanded house, four housemates, directed/group chat, debate, unlimited game turns, separate usage, poker/reveals/redeal, Windows/social settings, movie mode, paced speech, pause and reset.")
+    print("UI smoke passed: player interruption priority, non-betting poker chat, spectator joining, sit-outs, screen reactions, permitted-window gestures/revocation, pickup states, renamed housemates, games, settings and reset.")
 finally:
     app.quit()
     temporary.cleanup()

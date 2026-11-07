@@ -305,7 +305,8 @@ class Habitat:
             if resident.mode == "returning":
                 resident.goal = self.world.home
         poker = isinstance(app.game,Poker)
-        arrived = [] if poker else self.world.step(now-self.last_frame, now, autonomous=app.autonomy.get())
+        self.world.table_players = set(app.game.players) if poker else set()
+        arrived = self.world.step(now-self.last_frame, now, autonomous=app.autonomy.get())
         self.last_frame = now
         for name in arrived:
             resident = self.world.residents[name]
@@ -317,7 +318,7 @@ class Habitat:
             self.canvas.scale('all',0,0,self.view_scale,self.view_scale)
         for name, (win, canvas) in app.floaters.items():
             resident = self.world.residents[name]
-            if poker:
+            if poker and name in app.game.players:
                 win.withdraw()
                 if name in self.markers:
                     self.markers[name][0].withdraw()
@@ -342,6 +343,8 @@ class Habitat:
                 gaze = (dx/distance, dy/distance)
             self.paint(canvas, name, 95, 165, .95, False, app.frame+list(CHARACTERS).index(name)*17, gaze=gaze,talking=talking,
                        roll=resident.spin,emotion=app.social.moods[name],scuffling=name in app.social.scuffles,
+                       motion='held' if resident.picked_up else 'impact' if now<resident.impact_until else 'airborne' if resident.mode=='airborne' else 'idle',
+                       impact=resident.impact_strength,
                        pointing=resident.mode == "interested", walking=resident.mode in {"walking", "returning", "approaching", "settling", "sparring"},
                        seated=resident.mode == "seated")
             self.marker(name, resident)

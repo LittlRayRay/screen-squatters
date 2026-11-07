@@ -5,8 +5,8 @@ A little Windows desktop home for four AI housemates. They're here to hang out, 
 | Housemate | Personality |
 | --- | --- |
 | **Burt** | Lovable, literal and often confused. Hesitates naturally, makes terrible strategic plays, and very occasionally reveals PhD-level knowledge of tectonics and volcanoes. |
-| **Byte** | A smart, kind, excitable nerd who loves games, facts and terrible puns. Helpful when asked. |
-| **Rex** | Arrogant, theatrical and mildly rude. Affectionate snark, competitive energy and a tiny crown. |
+| **Cody** | Cheerful, kind, innocent and a little clueless. Loves maths, anime, games and tiny discoveries; enthusiastic logic can go wonderfully wrong. |
+| **Victoria** | A proud, posh, sharp-tongued woman with a knowing smirk, crisp British delivery and a fiercely loyal heart beneath the polish. |
 | **Mika** | Gentle, quietly certain peacemaker with a fictional garden charity, a love of tea and a hidden talent for precision goldsmithing. |
 
 ## Start the house
@@ -23,6 +23,8 @@ Character animation, settings and page reception can be previewed without a key.
 
 ## Hang out
 
+Player messages are accepted while an AI request is running. A newer message takes precedence over an outdated ambient reply; the next responder receives the actual player message first. Direct replies are required to say something, with an in-character acknowledgement if a model returns only filler. Existing typed chat is completed so the player is not waiting behind a long animation. In poker, a group question asks one housemate to keep play moving; directed replies never make an accidental bet.
+
 - Wake any combination of housemates and click one to chat. Each awake character gets a separate turn and can react to what the others said. They glance toward the friend who spoke previously.
 - **Automatic conversation** (house context menu or Housemates settings) enables one character to speak approximately every 25 seconds after a turn completes, rotating among awake characters. It starts enabled, but no requests run until a character is awake and an API key is present.
 - Uncheck it for conversation only when you send a message. Game turns continue while a game is active.
@@ -30,9 +32,9 @@ Character animation, settings and page reception can be previewed without a key.
 
 They know they're AI companions. Their prompts emphasise social conversation and distinctive personalities rather than task completion. They can request bounded window moves only where you explicitly allow them in Windows settings. They cannot click, type, close apps or browse independently.
 
-Conversation now has a short typing pause, animated typing dots and a gradual text reveal in both the chat and character bubbles. Text arrives at roughly 20–26 characters per second, with extra pauses at punctuation. Long bubbles continue across short pages; the full reply remains in chat. The next AI turn waits until the visible reply finishes. Filler-only model responses such as “hmm…” become silence. Typing animation itself uses no tokens. Casual speech prompts encourage contractions, short reactions and self-corrections while preserving each character's personality.
+Conversation now has a short typing pause, animated typing dots and a gradual text reveal in both the chat and character bubbles. Text arrives at roughly 20–26 characters per second, with extra pauses at punctuation. Long bubbles continue across short pages; the full reply remains in chat. Normal conversation waits until a visible reply finishes. Poker remarks use a faster pace and do not block the next betting turn. Filler-only model responses such as “hmm…” become silence. Typing animation itself uses no tokens. Casual speech prompts encourage contractions, short reactions and self-corrections while preserving each character's personality.
 
-The housemates are coloured balls with accessories: Burt’s curl, Byte’s glasses, Rex’s crown and Mika’s gold ring and leaf. They hop when wandering, breathe while idle/asleep, blink at different times and animate their mouths while speaking. Speech bubbles have rounded corners, shadows, coloured name labels and bouncing typing dots. Stand still still freezes travel; expressive idle and talking animations remain.
+The housemates are coloured balls with accessories: Burt’s curl, Cody’s glasses, Victoria’s crown and Mika’s gold ring and leaf. They hop when wandering, breathe while idle/asleep, blink at different times and animate their mouths while speaking. Speech bubbles have rounded corners, shadows, coloured name labels and bouncing typing dots. Stand still still freezes travel; expressive idle and talking animations remain.
 
 ## A life on the desktop
 
@@ -46,7 +48,7 @@ Disable **Autonomous life** from the house context menu or **Settings → Housem
 
 ## Native Windows awareness and window play
 
-**Settings → Windows** inventories ordinary visible top-level windows on the current desktop every two seconds using Win32 APIs. The local inventory includes app identity, title/class, bounds, focus and minimized/maximized state. It detects windows opening, closing and gaining focus. No screenshot or window-content reading is involved. A bounded summary of up to 20 windows and five recent events can accompany a normal AI turn; polling itself never calls Gemini. With Automatic conversation enabled, a new window may bring the next idle reaction forward to about five seconds, throttled across events.
+**Settings → Windows** tracks ordinary visible top-level windows with native WinEvent open/close/foreground notifications, backed by a two-second Win32 inventory. The local inventory includes app identity, title/class, bounds, focus and minimized/maximized state. It detects windows opening, closing and gaining focus. No screenshot or window-content reading is involved. A bounded summary of up to 20 windows and five recent events can accompany a normal AI turn; polling itself never calls Gemini. Brief local reactions acknowledge permitted opens, closes and switches while companions are awake. They do not require an AI request for each event. Rapid bursts are covered by one compact comment that counts the changes; player replies take priority. Normal AI turns can then discuss the supplied page/screen details more naturally, mixed with ordinary conversation.
 
 Metadata sharing starts on; **window play starts off**. Turn on window play and explicitly grant a policy to a selected window or its app before companions can move anything. The settings list shows every locally detected eligible window; process paths stay local for matching policies. Model context uses opaque session IDs instead of HWNDs/process IDs.
 
@@ -56,15 +58,15 @@ Metadata sharing starts on; **window play starts off**. Turn on window play and 
 - **Scope:** a session-only policy for this window, or a saved policy for all windows from that exact executable path. A window override takes precedence.
 - **Recovery:** Undo last move restores prior bounds where possible; Pause all window play stops further changes. An activity log shows recent requests.
 
-The controller rechecks permissions, window/process identity and current state immediately before an action. It preserves focus/stacking order, constrains changes to the current monitor work area, and skips maximized/minimized/fullscreen windows, owned dialogs, security surfaces, inaccessible identities and the house's own windows. Windows may refuse an asynchronous move. No close/launch, mouse, keyboard, file or content-editing actions exist. Window play is disabled during games and movie mode.
+Window play is deliberately more active: **0 Off, 1 Relaxed, 2 Playful, 3 Eager** controls local opportunities (Eager by default). Personality-driven local nudges/occasional permitted resizing supplement model-selected actions without extra API requests. Companions can approach and look at a window they play with. Your existing idle, cooldown, rate, travel and size limits remain authoritative; adjust those in Windows settings if you want more frequent activity. The controller rechecks permissions, window/process identity and current state immediately before an action. It preserves focus/stacking order, constrains changes to the current monitor work area, and skips maximized/minimized/fullscreen windows, owned dialogs, security surfaces, inaccessible identities and the house's own windows. Windows may refuse an asynchronous move. No close/launch, mouse, keyboard, file or content-editing actions exist. Window play is disabled during games and movie mode.
 
 These policies govern the **native window feed and movement**. Firefox sharing and screenshot fallback have separate controls. Native titles are untrusted reference text and cannot grant themselves permissions; selected titles may be sent to Gemini during companion turns.
 
-Implemented with Microsoft's [EnumWindows](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumwindows), [GetWindowTextW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowtextw), [SetWindowPos](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos) and [GetLastInputInfo](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getlastinputinfo).
+Native notifications use Microsoft's [SetWinEventHook](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook) without injecting into other apps. Inventory/movement use [EnumWindows](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumwindows), [GetWindowTextW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowtextw), [SetWindowPos](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos) and [GetLastInputInfo](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getlastinputinfo).
 
 ## Balls, physics and moods
 
-Drag a housemate and release while moving to throw them. Gravity pulls them down, they bounce off the display bounds and collide with one another, transferring momentum. Physics uses short simulation steps to avoid fast throws passing through another ball. Accessories/faces rotate while thrown. **Settings → Social & physics** controls throwing/collisions, gravity, bounce, playful scuffles and the time between scuffles. **Stand still** freezes both travel and physics; manual placement still works. Movie chairs and poker seating suspend throwing.
+Drag a housemate and release while moving to throw them. Gravity pulls them down, they bounce off the display bounds and collide with one another, transferring momentum. Physics uses short simulation steps to avoid fast throws passing through another ball. Accessories/faces rotate while thrown, then smoothly return upright after landing. Pickup and Stand still reset rotation. Each character has distinct held, airborne and impact expressions: Burt looks bewildered, Cody delighted, Victoria affronted before recovering her smirk, and Mika gently concerned. Landing squash, blinking and mouth shapes complement those expressions. **Settings → Social & physics** controls throwing/collisions, gravity, bounce, playful scuffles and the time between scuffles. **Stand still** freezes both travel and physics; manual placement still works. Movie chairs and poker seating suspend throwing.
 
 Housemates can be calm, happy, annoyed or angry and see one another's current moods. An annoyed housemate can initiate a short cartoon squabble; two irritated friends may also trigger one naturally. They approach each other with bouncing stars, cool down and return to normal. Scuffles have a cooldown and never affect user windows, memories, allowances or health. They are disabled during games and movies and can be switched off entirely.
 
@@ -94,7 +96,7 @@ Game/debate requests keep normal short reply limits but do not reserve, spend or
 
 ## Memories
 
-Each character has its own notebook of up to 30 short memories. During ordinary conversation, a character can leave up to two notes in its own or another character's notebook. Notes include their author and time, so Byte can remember something Rex said without losing the source.
+Each character has its own notebook of up to 30 short memories. During ordinary conversation, a character can leave up to two notes in its own or another character's notebook. Notes include their author and time, so Cody can remember something Victoria said without losing the source.
 
 The model is instructed to remember shared jokes, relationships, game outcomes and preferences explicitly volunteered by you. It is instructed not to memorise raw screen content, private identifiers or secret roles. Generated memories are observations and can be wrong. Inspect them with **Memory** and remove individual notes. Memory updates are disabled during games; the app records the public result when a game finishes.
 
@@ -106,7 +108,7 @@ Memories, allowances and usage are saved in `.local/house.json`, which is exclud
 
 **Tic-tac-toe:** wake a housemate, right-click the house, choose **Play a game → Tic-tac-toe** and pick an opponent. With two or more awake, you can also watch the first two play each other. Click squares on your turn. The local engine validates turn order, occupied squares, wins and draws; a model's invalid move falls back to the first open square.
 
-**Mafia:** the five players are you, Burt, Byte, Rex and Mika, with one randomly assigned mafia member and four townsfolk. Participants wake automatically, even with spent local allowances. Everyone gets a discussion turn and a vote; ties eliminate nobody. At night the mafia secretly chooses one player to eliminate. The town wins by voting out the mafia; the mafia wins at parity. Eliminated players spectate. Your own role appears in the game window; each model receives only its own role. Night speech isn't published, and per-character token counters are hidden during Mafia to avoid revealing the actor. There are no doctor/detective roles in this five-player version.
+**Mafia:** the five players are you, Burt, Cody, Victoria and Mika, with one randomly assigned mafia member and four townsfolk. Participants wake automatically, even with spent local allowances. Everyone gets a discussion turn and a vote; ties eliminate nobody. At night the mafia secretly chooses one player to eliminate. The town wins by voting out the mafia; the mafia wins at parity. Eliminated players spectate. Your own role appears in the game window; each model receives only its own role. Night speech isn't published, and per-character token counters are hidden during Mafia to avoid revealing the actor. There are no doctor/detective roles in this five-player version.
 
 Speak in the living room or click pass during your discussion turn. Vote/choose a night target in the game window. Game inference ignores local chat allowances and records separate game usage. Sending a player home ends the current game. Provider quotas, charges and service errors still apply. An API error ends the game and pauses automatic hangout rather than retrying paid requests repeatedly.
 
@@ -114,15 +116,21 @@ Speak in the living room or click pass during your discussion turn. Vote/choose 
 
 Right-click the house → **Play a game → Poker night**, or type **“play poker”** in chat. With a working API connection, all four housemates wake and sit with you around an animated table. Their desktop bodies reappear when you leave. Ordinary wandering and natural rest pause while the table is open. Movie mode ends when poker begins.
 
-This is five-player **fixed-limit Texas hold'em with play chips**: two private cards each, a shared flop/turn/river, 5/10 blinds, bets of 10 before/on the flop and 20 on the turn/river, with up to three raises per street. Click **Fold**, **Check**, **Call** or **Bet/Raise** on your turn. The app enforces turn order and legal bets, evaluates the best five-card hand, and splits tied pots. Illegal model actions fall back to checking or calling. Each new hand starts everyone with 1,000 chips and rotates the dealer; stacks don't carry between hands, so there are no all-ins or side pots.
+A full house is five-player **fixed-limit Texas hold'em with play chips** (three to five seats when someone sits out or you spectate): two private cards each, a shared flop/turn/river, 5/10 blinds, bets of 10 before/on the flop and 20 on the turn/river, with up to three raises per street. Click **Fold**, **Check**, **Call** or **Bet/Raise** on your turn. The app enforces turn order and legal bets, evaluates the best five-card hand, and splits tied pots. Illegal model actions fall back to checking or calling. Most poker actions are silent; a reveal, raise or occasional one-liner still gets a reaction. Short poker text types faster and does not hold up betting. Direct player questions get priority and never submit a betting action. Each new hand starts everyone with 1,000 chips and rotates the dealer; stacks don't carry between hands, so there are no all-ins or side pots.
 
 Your own cards always appear to you. Each model gets only its own cards, the shared board, public actions and hands that have explicitly been shown. Each housemate decides whether to reveal its cards after its action, including a fold. Leave **Show my cards after my action** unchecked to keep yours private, check it before acting to reveal afterward, or click **Reveal my cards now**. A reveal is public for the rest of that hand and cannot be undone. Even at the end, the local engine can determine the winner without forcing anyone's cards face-up. You can still reveal afterward. **Deal next hand** clears all reveals and deals fresh cards.
 
 Only the public game result becomes a memory. Game state and hands aren't saved between app launches. AI decisions and game banter ignore the local token allowance and add to the separate game-usage counter; dealing, evaluation and animations are local. Generated speech is instructed to keep unrevealed cards private; this is a social companion prototype rather than an adversarial secure multiplayer service.
 
+### Housemate invitations and occasional sit-outs
+
+Housemates may suggest a game themselves, with **Join**, **Watch them play** or **Not now**. If enabled in **Settings → Social & physics**, an unanswered 25-second invitation lets them start without the player. Invitations occur only while idle, with a working key and multiple awake friends, and are spaced many minutes apart. Turn off invitations or automatic starts independently. Game turns still use the provider and bypass local chat allowances.
+
+Most games start immediately. Occasionally a friend briefly deliberates and opts to watch; enough remaining players can continue, otherwise the game is postponed. That friend stays visible on the desktop during poker. Deliberation can be disabled in settings. Spectator poker never exposes hidden cards; choose **Join the next hand/game** to participate after the current one ends.
+
 ### Debate night
 
-Right-click the house → **Play a game → Debate a topic**, enter a topic, and all four companions join you for three rounds. Add your argument in the group chat on your turn or choose **Pass this round**. Burt asks literal questions, Byte makes a case, Rex challenges it, and Mika seeks common ground; their personalities and the recent arguments shape their replies. Each speaker gets the floor in turn and can address a specific earlier point. Debate turns bypass local chat allowances, with usage recorded separately like other games.
+Right-click the house → **Play a game → Debate a topic**, enter a topic, and all four companions join you for three rounds. Add your argument in the group chat on your turn or choose **Pass this round**. Burt asks literal questions, Cody makes a case, Victoria challenges it, and Mika seeks common ground; their personalities and the recent arguments shape their replies. Each speaker gets the floor in turn and can address a specific earlier point. Debate turns bypass local chat allowances, with usage recorded separately like other games.
 
 ## Movie mode
 
@@ -138,10 +146,12 @@ This is periodic still-frame/caption awareness, not continuous video or audio li
 
 ## Firefox extension
 
+Reload the **0.5.0** add-on to enable the new event stream. With live updates enabled, non-private tab opens, closes, switches and navigation are delivered separately from page snapshots, including background tabs. The desktop queues a brief acknowledgement of each permitted change while awake; bursts can share a counted comment. Pausing sharing clears pending browser reactions. Private tabs are excluded, and internal/protected tabs contribute only generic events without their title, URL or page contents. Lifecycle notifications use Firefox's [Tabs events](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabs).
+
 Requires Firefox desktop 140 or newer. This directory now contains a Firefox-native Manifest V3 extension using `browser` APIs and background scripts.
 
 1. Start the updated desktop app. In Firefox open `about:debugging#/runtime/this-firefox`.
-2. Click **Load Temporary Add-on** and select **extension/manifest.json**, or the packaged **dist/screen-squatters-firefox-0.4.0.xpi**.
+2. Click **Load Temporary Add-on** and select **extension/manifest.json**, or the packaged **dist/screen-squatters-firefox-0.5.0.xpi**.
 3. Open **Screen Squatters · Firefox live feed** from Firefox's extensions menu.
 4. Copy the pairing code from the house's **Settings → Connection** into the popup. This local bridge credential is separate from your Gemini API key.
 5. Click **Enable live updates** and allow website access. Focus a normal HTTP/HTTPS webpage. A **LIVE** badge and popup status show successful deliveries. **Share this page once** remains available without enabling the continuous feed.
@@ -184,7 +194,7 @@ Requests use Google's [Gemini Developer API](https://ai.google.dev/api/generate-
 
 Switching from the earlier build keeps local memories and used allowances. Restart the app, enter your Gemini key in Connection settings, and reload the extension to update its provider disclosure. Earlier provider environment variables are no longer used.
 
-Existing Pip saves migrate to Burt automatically, including token usage, interrupted-request reservations and memories. Memory authors and references use Burt's new name. If a save already has Burt, that record takes precedence. Factory reset restores Burt's new personality.
+Existing saves migrate Pip → Burt, Byte → Cody and Rex → Victoria, including chat/game usage, interrupted-request reservations, memory authors and name references. An existing canonical record takes precedence over its old name. Factory reset restores all current personalities.
 
 ## Tests
 
@@ -195,10 +205,10 @@ python tests/ui_smoke.py
 python tests/windows_live.py
 ```
 
-Core tests cover native window permissions, idle/cooldown/identity guards, privacy, undo, physics/collisions, debate, unlimited game accounting, budgets, sleep recovery, frozen movement, movie commands/seats/prompts, crash reservations, memory isolation, reset, game rules, poker hand rankings/private views/optional reveals/chip conservation across 300 simulated hands, paced speech, role privacy, bridge authentication, stream ordering, metadata validation, snapshot selection and PNG encoding. Node tests use isolated Firefox API mocks for permissions, popup/background contracts, SPA navigation, continuous updates and text filtering. The UI smoke check uses a temporary house and random local port, mocks AI replies/movie frames, exercises games, movie mode, progressive transcript ordering, five-seat poker, debate, directed/group chat, four-housemate settings, game-budget exemptions and browser pause/late-message clearing, and captures only its own opaque conversation window to verify native PNG encoding. It closes its windows afterward. The native window integration test enumerates metadata locally and verifies bounded moves/resizes/undo only against a disposable child fixture window. No other apps are moved. No live AI API calls are made by the tests.
+Core tests cover guaranteed/batched event coverage, old-name migrations, upright settling, spectator card privacy, rare sit-outs, native window permissions, idle/cooldown/identity guards, privacy, undo, physics/collisions, debate, unlimited game accounting, budgets, sleep recovery, frozen movement, movie commands/seats/prompts, crash reservations, memory isolation, reset, game rules, poker hand rankings/private views/optional reveals/chip conservation across 300 simulated hands, paced speech, role privacy, bridge authentication, stream ordering, metadata validation, snapshot selection and PNG encoding. Node tests use isolated Firefox API mocks for permissions, popup/background contracts, SPA navigation, continuous updates and text filtering. The UI smoke check uses a temporary house and random local port, mocks AI replies/movie frames, exercises games, movie mode, progressive transcript ordering, five-seat poker, debate, directed/group chat, four-housemate settings, game-budget exemptions and browser pause/late-message clearing, and captures only its own opaque conversation window to verify native PNG encoding. It closes its windows afterward. The native window integration test enumerates metadata locally and verifies bounded moves/resizes/undo only against a disposable child fixture window. No other apps are moved. No live AI API calls are made by the tests.
 
-`python tools/preview_social.py` renders the four ball characters, poker table and compact/expanded house fixture previews into `.local/`. It asks only its own opaque test windows to paint themselves through Windows `PrintWindow`, checks process ownership, and does not capture the desktop or use live AI.
+`python tools/preview_social.py` renders the character expression grid, poker table, settings and compact/expanded house fixture previews into `.local/`. It asks only its own opaque test windows to paint themselves through Windows `PrintWindow`, checks process ownership, and does not capture the desktop or use live AI.
 
-`tests/firefox_live.py --web-ext-js PATH_TO_WEB_EXT_JS` additionally runs Mozilla's `web-ext` with installed Firefox in a disposable headless profile. It verifies real repeated updates while companions sleep, metadata/DOM changes, SPA navigation, visible captions, media state and private-field filtering against local fixture pages. It does not use your personal browser profile or Gemini key. Validate the extension with `web-ext lint --source-dir extension`.
+`tests/firefox_live.py --web-ext-js PATH_TO_WEB_EXT_JS` additionally runs Mozilla's `web-ext` with installed Firefox in a disposable headless profile. It verifies real repeated updates while companions sleep, background-tab opening/closing, metadata/DOM changes, SPA navigation, visible captions, media state and private-field filtering against local fixture pages. It does not use your personal browser profile or Gemini key. Validate the extension with `web-ext lint --source-dir extension`.
 
 To diagnose connectivity, run `python diagnose_gemini.py`. It prompts for a key with hidden input (never saved), then checks model availability and token counting. Add `--generate` to also make one short generation request, which may use API credits. `--model MODEL_ID` selects a different model. Diagnostic output includes HTTP codes and usage metadata, not credentials or conversation/page content.

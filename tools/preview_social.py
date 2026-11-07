@@ -74,15 +74,17 @@ def main():
         try:
             app.key = 'fixture-only'
             app.house.options['window_awareness'] = False
+            app.house.options['game_deliberation'] = False
+            app.windows.backend.set_monitoring(False)
             app.stand_still.set(True)
             app.stand_still_changed()
             app.start_poker()
             while app.game.phase == 'preflop' or app.game.actor != 'You':
                 legal = app.game.legal_actions(app.game.actor)
                 app.game.act(app.game.actor,'check' if 'check' in legal else 'call')
-            app.game.reveal('Rex')
+            app.game.reveal('Victoria')
             app.render_game()
-            app.busy_name = 'Byte'
+            app.busy_name = 'Cody'
             root.withdraw()
             snapshot(app.game_window,local/'poker-preview.png')
             app.busy_name = None
@@ -94,13 +96,26 @@ def main():
             preview.geometry('820x320')
             canvas = tk.Canvas(preview,width=820,height=320,bg='#171923',highlightthickness=0)
             canvas.pack()
-            for name,x in [('Burt',105),('Byte',310),('Rex',515),('Mika',720)]:
-                draw_friend(canvas,name,x,215,1.1,phase=25,walking=name=='Byte',talking=name=='Burt')
+            for name,x in [('Burt',105),('Cody',310),('Victoria',515),('Mika',720)]:
+                draw_friend(canvas,name,x,215,1.1,phase=25,walking=name=='Cody',talking=name=='Burt')
                 canvas.create_text(x,288,text=name,fill='#f1edff',font=('Segoe UI',11,'bold'))
             speech_bubble(canvas,'Burt','Umm, wait, do I put these cards down now?',x=15,y=24,width=180)
-            speech_bubble(canvas,'Rex','',x=425,y=24,width=180,color='#ffc18d',typing=True,phase=25)
+            speech_bubble(canvas,'Victoria','',x=425,y=24,width=180,color='#ffc18d',typing=True,phase=25)
             snapshot(preview,local/'speech-preview.png')
             preview.destroy()
+            expressions = tk.Toplevel(root)
+            expressions.title('Screen Squatters | personality expressions')
+            expressions.geometry('820x650')
+            board = tk.Canvas(expressions,width=820,height=650,bg='#171923',highlightthickness=0)
+            board.pack(fill='both',expand=True)
+            for name,x in [('Burt',105),('Cody',310),('Victoria',515),('Mika',720)]:
+                board.create_text(x,23,text=name,fill='#f1edff',font=('Segoe UI',12,'bold'))
+                for i,state in enumerate(('idle','held','airborne','impact')):
+                    y = 110+i*150
+                    draw_friend(board,name,x,y,1.1,phase=25,motion=state,impact=.8)
+                    board.create_text(x,y+65,text=state,fill='#abaec7',font=('Segoe UI',10))
+            snapshot(expressions,local/'expressions-preview.png')
+            expressions.destroy()
             gallery = tk.Toplevel(root)
             gallery.title('Screen Squatters | compact and expanded house')
             gallery.configure(bg='#171923')

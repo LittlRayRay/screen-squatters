@@ -74,6 +74,10 @@ def main():
   await configure(true);
   const tab=await browser.tabs.create({{url:"http://127.0.0.1:{website.server_port}/fixture",active:true}});
   await browser.windows.update(tab.windowId,{{focused:true}});
+  setTimeout(async()=>{{
+    const backgroundTab=await browser.tabs.create({{url:"http://127.0.0.1:{website.server_port}/background",active:false}});
+    setTimeout(()=>browser.tabs.remove(backgroundTab.id),800);
+  }},1200);
 }})().catch(error=>console.error("Test bootstrap:",error.message));
 '''
     (extension/'background.js').write_text(background,encoding='utf-8')
@@ -81,6 +85,7 @@ def main():
                '--arg=-headless','--no-reload','--no-input','--no-config-discovery']
     process = None
     pages = []
+    events = []
     try:
         with (work/'runner.log').open('w',encoding='utf-8') as log:
             process = subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,
@@ -95,8 +100,11 @@ def main():
                     continue
                 if item.get('kind') == 'browser-state':
                     continue
+                if item.get('kind') == 'browser-event':
+                    events.append(item)
+                    continue
                 pages.append(item)
-                if len(pages)>=4 and any(p['url'].endswith('/second') and 'Updated caption text' in p['text'] for p in pages):
+                if len(pages)>=4 and any(p['url'].endswith('/second') and 'Updated caption text' in p['text'] for p in pages) and any(event['event']=='tab-closed' for event in events):
                     break
         if not pages:
             print((work/'runner.log').read_text(encoding='utf-8',errors='replace')[-5000:])
@@ -114,6 +122,7 @@ def main():
         assert all(page['browser']=='firefox' and page['automatic'] for page in pages)
         assert all(a['sequence']<b['sequence'] for a,b in zip(pages,pages[1:]))
         assert sink.awake is False, 'The feed must work while all companions sleep'
+        assert {'tab-opened','tab-closed'} <= {event['event'] for event in events}, 'Background tab events must reach the desktop'
         print(f'Firefox live test passed: {len(pages)} real updates; metadata, DOM changes, SPA route, visible captions, media, offscreen context and private-field filtering; companions asleep.')
     finally:
         if process and process.poll() is None:
