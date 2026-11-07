@@ -178,7 +178,8 @@ try:
     app.next_turn = 0
     with patch.object(app.root, 'after'), patch.object(app, 'capture_tick'), patch.object(app, 'request_turn') as inferred:
         app.tick()
-    inferred.assert_not_called()
+    inferred.assert_called_once()
+    assert inferred.call_args.args[1].startswith('MOVIE_COMMENT')
     app.screen_enabled.set(False)
     app.question.insert(0, 'Stop movie mode')
     app.send()

@@ -3,11 +3,12 @@ import random
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ai import DEFAULT_MODEL, payload
+from ai import DEFAULT_MODEL, payload, companion_turn
 from behaviour import World
-from cinema import movie_command
+from cinema import movie_command, MOVIE_COMMENT_TRIGGER, movie_comment_fallback
 from house import House
 
 
@@ -133,6 +134,16 @@ class MovieTests(unittest.TestCase):
         self.assertIn('"mode": "movie"', body['contents'][0]['parts'][0]['text'])
         normal = payload(DEFAULT_MODEL, 'Burt', [], [], ['Burt'], 'Hi')
         self.assertNotIn('MOVIE MODE overrides', normal['systemInstruction']['parts'][0]['text'])
+
+    def test_scheduled_movie_comment_cannot_be_empty_even_without_a_frame(self):
+        response = {'usageMetadata':{'totalTokenCount':110},
+                    'candidates':[{'content':{'parts':[{'text':'{"speech":""}'}]}}]}
+        with patch('ai.post',side_effect=[{'totalTokens':100},response]):
+            result = companion_turn('fixture',DEFAULT_MODEL,'Cody',[],[],['Cody'],MOVIE_COMMENT_TRIGGER,1000,movie=True)
+        self.assertFalse(result.error)
+        self.assertTrue(result.speech)
+        previous = [{'speaker':'Cody','text':result.speech}]
+        self.assertNotEqual(movie_comment_fallback('Cody',previous),result.speech)
 
 
 if __name__ == '__main__':

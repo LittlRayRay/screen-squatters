@@ -20,7 +20,7 @@ from house import CHARACTERS, House
 from ball_art import draw_friend
 from habitat import Habitat
 from behaviour import interest_point
-from cinema import movie_command
+from cinema import movie_command, MOVIE_COMMENT_INTERVAL, MOVIE_COMMENT_TRIGGER
 from window_world import WindowWorld, clean_options, chaos_options
 from social import Social, throw_velocity
 from desktop_settings import windows_panel, social_panel
@@ -82,6 +82,7 @@ class ScreenSquatters:
         self.generation = 0
         self.scene = 0
         self.next_turn = time.monotonic() + 20
+        self.last_movie_comment = time.monotonic()
         self.last_speaker = -1
         self.cancelled = threading.Event()
         self.closing = False
@@ -190,6 +191,8 @@ class ScreenSquatters:
         self.transcript.configure(state="normal")
         self.transcript.insert("end", name + "\n", name)
         if name in CHARACTERS and text:
+            if self.movie_mode.get():
+                self.last_movie_comment = time.monotonic()
             line = SpeechLine(text, time.monotonic(),fast=isinstance(self.game,Poker))
             self.delivery_id += 1
             mark = 'speech_'+str(self.delivery_id)
@@ -308,7 +311,7 @@ class ScreenSquatters:
                 self.world.paused = False
             self.world.wake(name, time.monotonic())
             self.note(name + (" decided to wake up and explore." if automatic else " woke up and came out of the house."))
-            self.next_turn = time.monotonic() + (45 if self.movie_mode.get() else 2)
+            self.next_turn = time.monotonic() + (MOVIE_COMMENT_INTERVAL if self.movie_mode.get() else 2)
             if not self.key and not automatic:
                 self.note("Preview mode: add an API key in Settings for conversations and AI game turns.")
             self.save()
@@ -451,7 +454,8 @@ class ScreenSquatters:
             self.status.set("Movie mode ended. Back to hanging out.")
             if not quiet:
                 self.note("Movie mode ended. The chairs and popcorn are packed away.")
-        self.next_turn = time.monotonic()+45
+        self.last_movie_comment = time.monotonic()
+        self.next_turn = self.last_movie_comment+MOVIE_COMMENT_INTERVAL
         self.save()
         self.refresh()
 
@@ -868,7 +872,9 @@ class ScreenSquatters:
         self.save()
         self.refresh()
         self.status.set("All quiet at home." if not self.awake() else "Automatic conversation paused" if not self.hangout.get() else "Movie mode | watching quietly" if self.movie_mode.get() else "Hanging out")
-        self.next_turn = time.monotonic() + (.15 if self.pending else .45 if isinstance(self.game,Poker) and not self.game.result else 2 if self.game and not self.game.result else self.world.rng.uniform(60, 100) if self.movie_mode.get() else 25)
+        self.next_turn = time.monotonic() + (.15 if self.pending else .45 if isinstance(self.game,Poker) and not self.game.result else 2 if self.game and not self.game.result else 25)
+        if self.movie_mode.get() and not self.pending:
+            self.next_turn = max(time.monotonic()+1,self.last_movie_comment+MOVIE_COMMENT_INTERVAL)
 
     def capture_tick(self):
         now = time.monotonic()
@@ -1102,9 +1108,6 @@ class ScreenSquatters:
                     self.pending.popleft()
                 if self.hangout.get() and self.awake():
                     ready = [name for name in self.awake() if not self.movie_mode.get() or self.world.residents[name].mode == "seated"]
-                    if self.movie_mode.get() and not self.current_observation():
-                        ready = []
-                        self.next_turn = now+5
                     names = list(CHARACTERS)
                     for offset in range(1, len(names)+1):
                         index = (self.last_speaker + offset) % len(names)
@@ -1115,7 +1118,7 @@ class ScreenSquatters:
                             if notice:
                                 self.screen_change_context = None
                                 self.last_window_notice = now
-                            self.request_turn(names[index], 'A recent task change may be interesting: '+str(notice)+'. Only comment if you have something natural to add; otherwise continue the conversation or stay quiet. Never report window/tab counts or announce routine UI events.' if notice else "Watch this moment quietly. Only react briefly if this frame or caption gives you something specific to react to; otherwise leave speech empty." if self.movie_mode.get() else "Hang out naturally. Reply to a friend or talk about an interest. Screen context is optional background: do not narrate routine app/tab changes or report event counts. Silence is okay.")
+                            self.request_turn(names[index], 'A recent task change may be interesting: '+str(notice)+'. Only comment if you have something natural to add; otherwise continue the conversation or stay quiet. Never report window/tab counts or announce routine UI events.' if notice else MOVIE_COMMENT_TRIGGER if self.movie_mode.get() else "Hang out naturally. Reply to a friend or talk about an interest. Screen context is optional background: do not narrate routine app/tab changes or report event counts. Silence is okay.")
                             break
         self.root.after(500, self.tick)
 

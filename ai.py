@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 
 from house import CHARACTERS
-from cinema import MOVIE_RULES
+from cinema import MOVIE_RULES, movie_comment_fallback
 from speech import conversational_speech
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
@@ -224,6 +224,8 @@ def companion_turn(key, model, name, memories, conversation, awake, trigger, rem
         if not isinstance(data, dict) or not isinstance(data.get("speech"), str):
             raise ValueError("Missing speech")
         result.speech = conversational_speech(data["speech"][:2000],suppress_events=not trigger.startswith('PLAYER_MESSAGE'))
+        if movie and trigger.startswith('MOVIE_COMMENT') and not result.speech:
+            result.speech = movie_comment_fallback(name,conversation)
         if not result.speech and trigger.startswith('PLAYER_MESSAGE'):
             result.speech = {'Burt':'Umm, yes, I am listening. Let me think about what you said.',
                              'Cody':'Oh! I am listening, I promise.',
