@@ -1,6 +1,6 @@
 # Screen Squatters
 
-A little Windows desktop home for three AI housemates. They're here to hang out, tease each other, remember shared jokes and play games with you. Built with Python's standard library and a Chrome/Edge extension; no third-party packages required.
+A little Windows desktop home for three AI housemates. They're here to hang out, tease each other, remember shared jokes and play games with you. Built with Python's standard library and a Firefox extension; no third-party runtime packages required.
 
 | Housemate | Personality |
 | --- | --- |
@@ -91,21 +91,27 @@ Movie mode **does not switch on screen capture**. Enable **Screen snapshots** or
 
 This is periodic still-frame/caption awareness, not continuous video or audio listening. The characters are instructed not to invent scenes, dialogue, music, motion, future plot or spoilers. Player controls/title alone aren't a basis for scene reactions. Protected video may produce black screenshots. Live reaction quality depends on Gemini, a working key and API credits.
 
-## Browser extension
+## Firefox extension
 
-1. Open `chrome://extensions` or `edge://extensions`.
-2. Enable **Developer mode**, then **Load unpacked** and select this project's **extension** folder.
-3. Pin **Screen Squatters · browser companion**.
-4. Copy the pairing code from the home's **Settings → Connection** and paste it into the extension popup. It is a local bridge credential, separate from the API key.
-5. On a normal webpage, click **Share this page** for a single snapshot.
+Requires Firefox desktop 140 or newer. This directory now contains a Firefox-native Manifest V3 extension using `browser` APIs and background scripts.
 
-If you installed the earlier Pip extension, reload it on the browser's Extensions page to apply this version's scripts and permissions.
+1. Start the updated desktop app. In Firefox open `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on** and select **extension/manifest.json**, or the packaged **dist/screen-squatters-firefox-0.4.0.xpi**.
+3. Open **Screen Squatters · Firefox live feed** from Firefox's extensions menu.
+4. Copy the pairing code from the house's **Settings → Connection** into the popup. This local bridge credential is separate from your Gemini API key.
+5. Click **Enable live updates** and allow website access. Focus a normal HTTP/HTTPS webpage. A **LIVE** badge and popup status show successful deliveries. **Share this page once** remains available without enabling the continuous feed.
 
-**Start following focused pages** is optional. It asks for HTTP/HTTPS website access and registers a reader that checks every five seconds. It forwards text only from the focused browser window's active tab, while at least one housemate is awake. Reload other already-open tabs if necessary. **Stop following** disables forwarding and unregisters future injections; already-injected watchers stop reading when following is off. Website permission remains granted until you revoke it in the browser's extension settings.
+This development build is unsigned. Firefox removes temporary add-ons when it closes; load it again next session. A permanent installation in standard Firefox requires Mozilla signing. Run `python tools/package_firefox.py` to rebuild the unsigned XPI; packaging alone does not sign it. See Mozilla's [packaging instructions](https://extensionworkshop.com/documentation/publish/package-your-extension/).
 
-The reader prefers `main`/`article` and extracts text intersecting the viewport. It skips hidden content, scripts, inputs, textareas and editable regions. Up to 24,000 characters are received locally; each AI turn uses at most 6,000. Page titles and URLs are included, with URL credentials/query/fragment removed. Displayed text can still contain private information.
+The extension sends the focused, non-private tab to the local desktop bridge about once a second, including while **all companions are asleep**. DOM changes, scrolling, navigation and media events also trigger debounced refreshes. Unchanged pages reuse cached text; URL changes invalidate it. Existing tabs are activated immediately when following starts. Desktop disconnections retry automatically. This feed does not make an AI request every second: companions use the latest context during their normal turns.
 
-It does not read browser settings, extension store pages, local files, cross-origin iframes, closed shadow roots or text rendered in canvas/images. PDF viewers may provide no text. Single shared snapshots are available for up to five minutes; they are snapshots, not a claim of live access. Automatic browser observations must be fresh and match the foreground browser title.
+The feed includes title, cleaned URL, description, author, site name, language, page type, canonical URL, visible headings and links, reading progress, up to 12 visible target positions, media playback state and already-showing text-track captions. It sends up to 24,000 characters of viewport text and 12,000 of main/article context locally. Each AI turn receives up to 6,000 viewport characters, a 3,000-character page excerpt and bounded metadata. The extension does not record audio or capture screenshots/video frames. Movie visuals still use the desktop's separately enabled screenshot fallback.
+
+The reader skips scripts, hidden content, inputs, textareas, selects and editable regions. It does not access passwords, field values, cookies or raw HTML. URL credentials, query strings and fragments are stripped. Ordinary displayed content and metadata can still contain private information. The popup explains that selected context may be sent to Google Gemini during companion turns.
+
+**Pause live updates** stops reading and clears the desktop browser snapshot. Tab changes, loading, loss of browser focus and protected pages also clear the previous browser context; ordered stream messages prevent delayed snapshots from restoring it. Granted website permission remains until revoked in Firefox's extension settings. Private windows are excluded entirely.
+
+Firefox internal pages, extension store/protected pages, local files, cross-origin iframes, closed shadow roots and canvas/image text are unavailable. PDF viewers may provide no text. Single shared snapshots remain available for up to five minutes. Automatic browser observations must be fresh and match the foreground browser title.
 
 ## Periodic screenshot fallback
 
@@ -119,7 +125,7 @@ Turn capture off before viewing private material. **Settings → Screen awarenes
 
 ## Connection and troubleshooting
 
-The authenticated HTTP bridge listens only on `127.0.0.1:17373`. Its random token is stored in `.local/pairing-code.txt` (Git-ignored). Requests validate the host, origin, token, body size and page fields. `/status` reports whether anyone is awake; `/page` accepts snapshots. This prototype doesn't require a native-messaging installer or registry changes.
+The authenticated HTTP bridge listens only on `127.0.0.1:17373`. Its random token is stored in `.local/pairing-code.txt` (Git-ignored). Requests validate the host, Firefox/Chrome extension origin, token, body size and page fields. `/status` reports whether anyone is awake; `/page` accepts snapshots; `/browser-state` clears outdated context. This prototype doesn't require a native-messaging installer or registry changes.
 
 - **Port busy:** quit the older Pip or another Screen Squatters instance first.
 - **Can't reach the house:** launch the desktop app. If your browser requests local network access, allow it for this extension.
@@ -141,6 +147,8 @@ node tests/extension.cjs
 python tests/ui_smoke.py
 ```
 
-Core tests cover budgets, sleep recovery, frozen movement, movie commands/seats/prompts, crash reservations, memory isolation, reset, game rules, role privacy, bridge authentication, snapshot selection and PNG encoding. Node tests use isolated mocked Chrome APIs for popup/worker contracts and text filtering. The UI smoke check uses a temporary house and random local port, mocks AI replies/movie frames, opens real windows, exercises both games, movie invitations and source isolation, and captures only its own opaque conversation window to verify native PNG encoding. It closes its windows afterward. No live API calls are made by the tests. Real model behaviour and extension installation/permissions still require testing with your API account and browser.
+Core tests cover budgets, sleep recovery, frozen movement, movie commands/seats/prompts, crash reservations, memory isolation, reset, game rules, role privacy, bridge authentication, stream ordering, metadata validation, snapshot selection and PNG encoding. Node tests use isolated Firefox API mocks for permissions, popup/background contracts, SPA navigation, continuous updates and text filtering. The UI smoke check uses a temporary house and random local port, mocks AI replies/movie frames, exercises games, movie mode and browser pause/late-message clearing, and captures only its own opaque conversation window to verify native PNG encoding. It closes its windows afterward. No live AI API calls are made by the tests.
+
+`tests/firefox_live.py --web-ext-js PATH_TO_WEB_EXT_JS` additionally runs Mozilla's `web-ext` with installed Firefox in a disposable headless profile. It verifies real repeated updates while companions sleep, metadata/DOM changes, SPA navigation, visible captions, media state and private-field filtering against local fixture pages. It does not use your personal browser profile or Gemini key. Validate the extension with `web-ext lint --source-dir extension`.
 
 To diagnose connectivity, run `python diagnose_gemini.py`. It prompts for a key with hidden input (never saved), then checks model availability and token counting. Add `--generate` to also make one short generation request, which may use API credits. `--model MODEL_ID` selects a different model. Diagnostic output includes HTTP codes and usage metadata, not credentials or conversation/page content.

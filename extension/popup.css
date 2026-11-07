@@ -12,6 +12,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid #c5b0ff; outline-
 button { border: 0; width: 100%; border-radius: 8px; padding: 13px; color: #171923; background: #c5b0ff; font-size: 14px; font-weight: 650; cursor: pointer; }
 button:disabled { opacity: .6; cursor: wait; }
 #status { min-height: 38px; padding: 12px 0; }
+#feed { white-space: pre-line; min-height: 35px; margin-top: 12px; padding: 10px; border-radius: 8px; background: #232638; color: #91dfce; }
 details { border-top: 1px solid #34374a; padding-top: 14px; }
 summary { color: #c5b0ff; cursor: pointer; font-size: 12px; }
 details p { margin-top: 10px; }

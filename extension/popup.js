@@ -3,103 +3,59 @@ const code = document.querySelector("#code");
 const share = document.querySelector("#share");
 const status = document.querySelector("#status");
 const follow = document.querySelector("#follow");
+const feed = document.querySelector("#feed");
 let following = false;
 
 function tokenValue() {
   const token = code.value.trim();
   if (!/^[a-f0-9]{48}$/.test(token)) {
-    status.textContent = "Copy the pairing code from the desktop home's Settings and paste it above.";
-    code.focus();
-    return null;
+    status.textContent = "Copy the pairing code from the house's Settings first.";
+    code.focus(); return null;
   }
   return token;
 }
-
-async function init() {
+async function refresh() {
   try {
-    const saved = await chrome.storage.local.get(["pairingCode", "following"]);
-    code.value = saved.pairingCode || "";
-    following = !!saved.following;
-    follow.textContent = following ? "Stop following" : "Start following focused pages";
-    if (chrome.storage.local.setAccessLevel) {
-      await chrome.storage.local.setAccessLevel({accessLevel: "TRUSTED_CONTEXTS"});
-    }
-  } catch {
-    status.textContent = "Couldn't load your pairing code. Paste it again to continue.";
-  }
+    const state = await browser.runtime.sendMessage({type: "get-feed-status"});
+    following = !!state.enabled;
+    follow.textContent = following ? "Pause live updates" : "Enable live updates";
+    const age = state.last_sent ? Math.round((Date.now()-state.last_sent)/1000) : null;
+    feed.textContent = !following ? "OFF · single-page sharing is still available" : state.state === "live"
+      ? age < 6 ? `LIVE · updated ${age}s ago\n${state.title}` : `Waiting for the focused page · last update ${age}s ago`
+      : state.message;
+  } catch {feed.textContent = "Open the extension again to reconnect.";}
 }
-
 share.addEventListener("click", async () => {
-  const token = tokenValue();
-  if (!token) return;
+  const token = tokenValue(); if (!token) return;
   share.disabled = true;
-  status.textContent = "Reading visible page text…";
   try {
-    await chrome.storage.local.set({pairingCode: token});
-    const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-    if (!tab?.id || !/^https?:\/\//.test(tab.url || "")) {
-      throw new Error("Open a normal website first. Browser settings, new tabs and local files cannot be shared.");
-    }
-    let results;
-    try {
-      results = await chrome.scripting.executeScript({target: {tabId: tab.id}, func: readPage});
-    } catch {
-      throw new Error("This browser page is protected. Try an ordinary website or article.");
-    }
+    await browser.storage.local.set({pairingCode: token});
+    const [tab] = await browser.tabs.query({active: true, currentWindow: true});
+    if (!tab?.id || tab.incognito || !/^https?:\/\//.test(tab.url || "")) throw new Error("Open an ordinary, non-private webpage first.");
+    const results = await browser.scripting.executeScript({target: {tabId: tab.id}, func: readPage});
     const page = results[0]?.result;
-    if (!page) throw new Error("No readable page was returned. Reload the page and try again.");
-    let response;
-    try {
-      response = await fetch("http://127.0.0.1:17373/page", {
-        method: "POST", headers: {"Content-Type": "application/json", "Authorization": `Bearer ${token}`},
-        body: JSON.stringify({...page, automatic: false}), signal: AbortSignal.timeout(5000)
-      });
-    } catch {
-      throw new Error("Can't reach the house. Launch Screen Squatters and try again. Allow local network access if your browser asks.");
-    }
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Couldn't share this page.");
-    status.textContent = result.characters ? `Shared ${result.characters.toLocaleString()} characters with the house!` : "Shared, but no visible text was found. Try a text-based page.";
-  } catch (error) {
-    status.textContent = error.message || "Something went wrong. Try again.";
-  } finally {
-    share.disabled = false;
-  }
+    if (!page) throw new Error("This page couldn't be read. Firefox protects some internal and add-on pages.");
+    const response = await fetch("http://127.0.0.1:17373/page", {method: "POST",
+      headers: {"Content-Type": "application/json", "Authorization": `Bearer ${token}`},
+      body: JSON.stringify({...page, automatic: false}), signal: AbortSignal.timeout(3000)});
+    if (!response.ok) throw new Error(response.status === 403 ? "Pairing code rejected. Copy it again from the house." : "Couldn't share this page.");
+    status.textContent = "Shared this page, its metadata and available captions.";
+  } catch (error) {status.textContent = error.message === "NetworkError when attempting to fetch resource." ? "Open the desktop house, then try again." : error.message || "Open the desktop house, then try again.";}
+  finally {share.disabled = false;}
 });
-
 follow.addEventListener("click", async () => {
-  const token = tokenValue();
-  if (!token) return;
+  const token = tokenValue(); if (!token) return;
   follow.disabled = true;
   try {
-    if (following) {
-      await chrome.storage.local.set({following: false});
-      await chrome.scripting.unregisterContentScripts({ids: ["squatters-follow"]}).catch(() => {});
-      following = false;
-      status.textContent = "Following stopped. Previously shared snapshots remain until cleared in the home app.";
-    } else {
-      const granted = await chrome.permissions.request({origins: ["http://*/*", "https://*/*"]});
-      if (!granted) throw new Error("Website access wasn't granted. Share this page still works without following.");
-      await chrome.storage.local.set({pairingCode: token});
-      await chrome.scripting.unregisterContentScripts({ids: ["squatters-follow"]}).catch(() => {});
-      await chrome.scripting.registerContentScripts([{
-        id: "squatters-follow", matches: ["http://*/*", "https://*/*"],
-        js: ["reader.js", "watch.js"], runAt: "document_idle", allFrames: false,
-        persistAcrossSessions: true
-      }]);
-      await chrome.storage.local.set({following: true});
-      following = true;
-      const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-      if (tab?.id && /^https?:\/\//.test(tab.url || "")) {
-        await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["reader.js", "watch.js"]}).catch(() => {});
-      }
-      status.textContent = "Following focused pages while housemates are awake. Other existing tabs may need a reload. AI hangout turns can send this text to Google Gemini.";
-    }
-  } catch (error) {
-    status.textContent = error.message || "Couldn't change following. Try again.";
-  } finally {
-    follow.textContent = following ? "Stop following" : "Start following focused pages";
-    follow.disabled = false;
-  }
+    if (!following && !await browser.permissions.request({origins: ["http://*/*", "https://*/*"]})) throw new Error("Website access wasn't granted. Single-page sharing still works.");
+    await browser.storage.local.set({pairingCode: token});
+    const result = await browser.runtime.sendMessage({type: "configure-stream", enabled: !following});
+    if (!result?.ok) throw new Error(result?.error || "Couldn't change live updates.");
+    status.textContent = result.enabled ? "Live feed enabled. Focus a webpage; changes and metadata refresh automatically." : "Live feed paused and the desktop browser snapshot cleared.";
+    await refresh();
+  } catch (error) {status.textContent = error.message || "Couldn't change live updates.";}
+  finally {follow.disabled = false;}
 });
-init();
+browser.storage.local.get("pairingCode").then(saved => {code.value = saved.pairingCode || "";}).catch(() => {});
+refresh();
+setInterval(refresh, 1000);

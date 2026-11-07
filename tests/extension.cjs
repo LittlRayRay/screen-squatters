@@ -1,186 +1,159 @@
-/* Popup contract tests using Node's built-in VM; no browser/package install. */
+/* Firefox-native WebExtension contract tests, no browser packages required. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
-const source = fs.readFileSync(require('node:path').join(__dirname, '../extension/popup.js'), 'utf8');
-const readerSource = fs.readFileSync(require('node:path').join(__dirname, '../extension/reader.js'), 'utf8');
-const backgroundSource = fs.readFileSync(require('node:path').join(__dirname, '../extension/background.js'), 'utf8');
-const watchSource = fs.readFileSync(require('node:path').join(__dirname, '../extension/watch.js'), 'utf8');
+const source = file => fs.readFileSync(path.join(__dirname, '../extension', file), 'utf8');
+const flush = () => new Promise(resolve => setImmediate(resolve));
+const event = () => ({listeners: [], addListener(fn) {this.listeners.push(fn);}});
+const token = 'a'.repeat(48);
+const session = '11111111-1111-1111-1111-111111111111';
 
-function setup({url = 'https://example.com/article', injectionError = false, fetchError = false, statusCode = 200, permissionGranted = true} = {}) {
-  const fields = {
-    '#code': {value: '', focus() { this.focused = true; }},
-    '#share': {disabled: false, addEventListener(_event, callback) { this.click = callback; }},
-    '#follow': {disabled: false, addEventListener(_event, callback) { this.click = callback; }},
-    '#status': {textContent: ''}
-  };
-  const calls = {injections: 0, requests: [], saved: null, registered: []};
-  const context = vm.createContext({
-    document: {querySelector: selector => fields[selector]},
-    chrome: {
-      storage: {local: {
-        get: async () => ({pairingCode: 'a'.repeat(48)}),
-        set: async value => { calls.saved = value; },
-        setAccessLevel: async () => {}
-      }},
-      tabs: {query: async () => [{id: 1, url}]},
-      permissions: {request: async () => permissionGranted},
-      scripting: {
-        registerContentScripts: async scripts => {calls.registered = scripts;},
-        unregisterContentScripts: async () => {},
-        executeScript: async () => {
-        calls.injections++;
-        if (injectionError) throw new Error('Cannot access page');
-        return [{result: {title: 'Example', url, text: 'Useful article'}}];
-      }}
-    },
-    URL, AbortSignal,
-    fetch: async (url, options) => {
-      calls.requests.push({url, options});
-      if (fetchError) throw new Error('offline');
-      return {ok: statusCode === 200, json: async () => statusCode === 200 ? {characters: 14} : {error: 'Pairing code rejected'}};
-    }
-  });
-  vm.runInContext(readerSource, context);
-  vm.runInContext(source, context);
-  return {fields, calls, context};
+function node(text, {visible = true, editable = false, top = 20} = {}) {
+  const element = {tagName:'P', innerText:text, closest: () => editable,
+    checkVisibility: () => visible, getAttribute: () => null,
+    getBoundingClientRect: () => ({width:100,height:20,left:20,right:120,top,bottom:top+20})};
+  return {textContent:text,parentElement:element};
 }
 
-(async () => {
-  let app = setup();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(app.fields['#code'].value, 'a'.repeat(48));
-  await app.fields['#share'].click();
-  assert.equal(app.calls.injections, 1);
-  assert.equal(app.calls.requests[0].url, 'http://127.0.0.1:17373/page');
-  assert.equal(app.calls.requests[0].options.headers.Authorization, 'Bearer ' + 'a'.repeat(48));
-  assert.equal(JSON.parse(app.calls.requests[0].options.body).text, 'Useful article');
-  assert.match(app.fields['#status'].textContent, /Shared/);
-  assert.equal(app.fields['#share'].disabled, false);
-
-  app = setup();
-  await new Promise(resolve => setImmediate(resolve));
-  app.fields['#code'].value = 'bad';
-  await app.fields['#share'].click();
-  assert.equal(app.calls.injections, 0);
-  assert.equal(app.calls.requests.length, 0);
-
-  for (const options of [{url: 'chrome://settings'}, {injectionError: true}, {fetchError: true}, {statusCode: 403}]) {
-    app = setup(options);
-    await new Promise(resolve => setImmediate(resolve));
-    await app.fields['#share'].click();
-    assert.equal(app.fields['#share'].disabled, false);
-    assert.doesNotMatch(app.fields['#status'].textContent, /^Shared/);
-  }
-
-  app = setup();
-  await new Promise(resolve => setImmediate(resolve));
-  await app.fields['#follow'].click();
-  assert.equal(app.calls.registered[0].id, 'squatters-follow');
-  assert.equal(app.calls.saved.following, true);
-  await app.fields['#follow'].click();
-  assert.equal(app.calls.saved.following, false);
-  app = setup({permissionGranted: false});
-  await new Promise(resolve => setImmediate(resolve));
-  await app.fields['#follow'].click();
-  assert.equal(app.calls.registered.length, 0);
-  assert.match(app.fields['#status'].textContent, /wasn't granted/);
-
-  // Exercise the actual serialized reader with a small DOM fixture.
-  app = setup();
-  const nodes = ['First paragraph.', 'Second paragraph.'].map(textContent => ({textContent}));
-  let index = -1;
-  app.context.document = {
-    title: 'Example title', body: {querySelectorAll: () => []},
-    querySelector: () => ({querySelectorAll: () => []}),
-    createTreeWalker: () => ({nextNode() { index++; return index < nodes.length; }, get currentNode() { return nodes[index]; }})
+function readerFixture() {
+  const nodes = [node('Visible paragraph'), node('Offscreen article body',{top:900}),
+                 node('PRIVATE_EDITABLE',{editable:true}),node('HIDDEN_TEXT',{visible:false})];
+  const heading = {tagName:'H1',innerText:'A visible heading',closest:()=>false,checkVisibility:()=>true,
+    getAttribute:()=>null,getBoundingClientRect:()=>({width:100,height:30,left:20,right:120,top:20,bottom:50})};
+  const link = {...heading,tagName:'A',innerText:'A link',href:'https://user:secret@example.com/more?private=1#secret'};
+  const main = {querySelectorAll: () => [heading,link]};
+  const metas = {
+    'meta[name="description"]': {getAttribute:()=> 'Page description'},
+    'meta[name="author"]': {getAttribute:()=> 'Page author'},
+    'link[rel="canonical"]': {href:'https://example.com/article?private=1'}
   };
-  app.context.location = {href: 'https://example.com/article?token=private#secret'};
-  app.context.innerWidth = 800; app.context.innerHeight = 600;
-  app.context.outerWidth = 800; app.context.outerHeight = 680;
-  app.context.NodeFilter = {SHOW_TEXT: 4};
-  const extracted = vm.runInContext('readPage()', app.context);
-  assert.equal(extracted.url, 'https://example.com/article');
-  assert.equal(extracted.text, 'First paragraph.\nSecond paragraph.');
-
-  // Exercise visibility/form filtering instead of only stubbing accepted text nodes.
-  const fixtures = [
-    {textContent: 'Visible sentence', parentElement: parent(false, true)},
-    {textContent: 'Private input', parentElement: parent(true, true)},
-    {textContent: 'Offscreen text', parentElement: parent(false, false)}
-  ];
-  function parent(excluded, visible) {
-    return {excluded, visible, closest() {return this.excluded;}, checkVisibility() {return true;}};
-  }
-  app.context.NodeFilter = {SHOW_TEXT: 4, FILTER_REJECT: 2, FILTER_ACCEPT: 1};
-  app.context.getComputedStyle = () => ({visibility: 'visible'});
-  app.context.innerWidth = 800; app.context.innerHeight = 600;
+  const video = {...heading,tagName:'VIDEO',paused:false,ended:false,currentTime:12,duration:100,playbackRate:1,muted:false,
+    textTracks:[{mode:'showing',activeCues:[{text:'Visible caption'}]},{mode:'hidden',activeCues:[{text:'HIDDEN_CAPTION'}]}]};
   let rangeNode;
-  app.context.document.createRange = () => ({
-    selectNodeContents(node) {rangeNode = node;},
-    getClientRects: () => [{top: rangeNode.parentElement.visible ? 20 : 900, bottom: 950, left: 20, right: 100}]
-  });
-  app.context.document.createTreeWalker = (_root, _what, filter) => {
-    const accepted = fixtures.filter(node => filter.acceptNode(node) === 1);
-    let index = -1;
-    return {nextNode() {return ++index < accepted.length;}, get currentNode() {return accepted[index];}};
-  };
-  assert.equal(vm.runInContext('readPage()', app.context).text, 'Visible sentence');
-  const heading = {innerText: 'Interesting heading', closest: () => null,
-    getAttribute: () => null, checkVisibility: () => true,
-    getBoundingClientRect: () => ({width: 100, height: 30, left: 20, right: 120, top: 20, bottom: 50})};
-  app.context.document.querySelector = () => ({querySelectorAll: () => [heading]});
-  const targeted = vm.runInContext('readPage()', app.context);
-  assert.equal(targeted.targets[0].label, 'Interesting heading');
-  assert.equal(targeted.targets[0].x, 70/800);
-  assert.equal(targeted.viewport.outerHeight, 680);
+  const document = {title:'Example',body:main,documentElement:{lang:'en',scrollHeight:2400},
+    querySelector(selector) {return selector.startsWith('main,') ? main : metas[selector] || null;},
+    querySelectorAll: () => [video],
+    createTreeWalker() {let i=-1; return {nextNode(){return ++i<nodes.length;},get currentNode(){return nodes[i];}};},
+    createRange: () => ({selectNodeContents(n){rangeNode=n;},getClientRects:()=>[rangeNode.parentElement.getBoundingClientRect()]})};
+  Object.defineProperty(document,'cookie',{get(){throw new Error('Cookies must not be read');}});
+  const context = vm.createContext({document,URL,Date,location:{href:'https://example.com/article?token=secret#private'},
+    NodeFilter:{SHOW_TEXT:4},getComputedStyle:()=>({visibility:'visible',display:'block'}),
+    innerWidth:800,innerHeight:600,outerWidth:800,outerHeight:680,scrollY:300});
+  vm.runInContext(source('reader.js'),context);
+  return {context, page:vm.runInContext('readPage()',context)};
+}
 
-  let listener;
-  let awake = true, focused = true, following = true;
-  const forwarded = [];
-  const worker = vm.createContext({URL, AbortSignal, chrome: {
-    runtime: {onMessage: {addListener(value) {listener = value;}}},
-    storage: {local: {get: async () => ({following, pairingCode: 'a'.repeat(48)})}},
-    tabs: {query: async () => [{id: 1}]}, windows: {get: async () => ({focused})}
-  }, fetch: async (url, options) => {
-    if (url.endsWith('/status')) return {ok: true, json: async () => ({awake})};
-    forwarded.push(JSON.parse(options.body)); return {ok: true};
-  }});
-  vm.runInContext(backgroundSource, worker);
-  const message = {type: 'focused-page', page: {title: 'Example', text: 'Visible', url: 'https://example.com/article?private=1', targets: [{label:'Heading',x:.3,y:.4}], viewport:{width:800,height:600}}};
-  const sender = {tab: {id: 1, windowId: 1}, frameId: 0, url: 'https://example.com/article'};
-  async function deliver(message, sender) {
-    await new Promise(resolve => {if (listener(message, sender, resolve) !== true) resolve();});
+function backgroundFixture() {
+  const saved = {following:false,pairingCode:token};
+  const requests = [], badges = [];
+  let focused = true, active = {id:1,windowId:5,url:'https://example.com/article',active:true};
+  const browser = {
+    runtime:{onMessage:event(),onStartup:event(),getURL:file=>'moz-extension://test/'+file},
+    storage:{local:{get:async()=>({...saved}),set:async value=>Object.assign(saved,value)}},
+    permissions:{contains:async()=>true,onRemoved:event()},
+    action:{setBadgeText:async value=>badges.push(value.text),setBadgeBackgroundColor:async()=>{}},
+    tabs:{query:async()=>[active],sendMessage:async()=>{},onActivated:event(),onUpdated:event()},
+    windows:{get:async()=>({focused}),onFocusChanged:event()},
+    scripting:{executeScript:async()=>[],unregisterContentScripts:async()=>{},registerContentScripts:async()=>{}}
+  };
+  const context=vm.createContext({browser,URL,AbortSignal,Date,crypto:{randomUUID:()=>session},
+    fetch:async(url,options)=>{requests.push({url,body:JSON.parse(options.body),headers:options.headers});return {ok:true,json:async()=>({characters:17})};}});
+  vm.runInContext(source('background.js'),context);
+  const send=(message,sender={url:'moz-extension://test/popup.html'})=>browser.runtime.onMessage.listeners[0](message,sender);
+  return {browser,saved,requests,badges,send,setFocused:value=>focused=value,setActive:value=>active=value};
+}
+
+async function popupChecks(page) {
+  for (const permission of [true,false]) {
+    const fields = Object.fromEntries(['code','share','status','follow','feed'].map(id=>['#'+id,
+      {value:'',textContent:'',focus(){},addEventListener(_kind,fn){this.click=fn;}}]));
+    let enabled = false, posts = 0;
+    const browser = {storage:{local:{get:async()=>({pairingCode:token}),set:async()=>{}}},
+      permissions:{request:async()=>permission},tabs:{query:async()=>[{id:1,url:page.url}]},
+      scripting:{executeScript:async()=>[{result:page}]},runtime:{sendMessage:async message=>{
+        if(message.type==='configure-stream') {enabled=message.enabled;return {ok:true,enabled};}
+        return {enabled,state:enabled?'live':'off',last_sent:Date.now(),title:'Example',message:'Paused'};
+      }}};
+    const context=vm.createContext({browser,document:{querySelector:selector=>fields[selector]},
+      readPage:()=>page,AbortSignal,Date,setInterval:()=>{},fetch:async()=>{posts++;return {ok:true};}});
+    vm.runInContext(source('popup.js'),context); await flush();
+    assert.equal(fields['#code'].value,token);
+    await fields['#follow'].click();
+    assert.equal(enabled,permission);
+    if(permission) {await fields['#follow'].click();assert.equal(enabled,false);}
+    else assert.match(fields['#status'].textContent,/wasn't granted/);
+    await fields['#share'].click();
+    assert.equal(posts,1);
+    fields['#code'].value='wrong';await fields['#share'].click();assert.equal(posts,1);
   }
-  await deliver(message, sender);
-  assert.equal(forwarded.length, 1);
-  assert.equal(forwarded[0].url, 'https://example.com/article');
-  assert.equal(forwarded[0].automatic, true);
-  assert.equal(forwarded[0].targets[0].label, 'Heading');
-  awake = false; await deliver(message, sender);
-  awake = true; focused = false; await deliver(message, sender);
-  focused = true; following = false; await deliver(message, sender);
-  following = true; await deliver(message, {...sender, frameId: 1});
-  await deliver({...message, page: {...message.page, url: 'https://other.example/'}}, sender);
-  assert.equal(forwarded.length, 1, 'Sleeping, unfocused, disabled, child-frame and forged pages must not forward');
-  let timer, canRead = false, hasFocus = true, reads = 0, watchMessages = 0;
-  const watcher = vm.createContext({
-    document: {visibilityState: 'visible', hasFocus: () => hasFocus},
-    chrome: {runtime: {sendMessage: async message => {
-      if (message.type === 'may-observe') return {following: canRead};
-      watchMessages++; return {ok: true};
-    }}},
-    readPage: () => {reads++; return {title: 'Page', url: 'https://example.com/', text: 'Visible'};},
-    setInterval: callback => {timer = callback;}
-  });
-  vm.runInContext(watchSource, watcher);
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(reads, 0, 'Disabled watchers must not parse pages');
-  canRead = true; await timer();
-  assert.equal(reads, 1); assert.equal(watchMessages, 1);
-  hasFocus = false; await timer();
-  assert.equal(reads, 1, 'Unfocused watchers must not parse pages');
-  hasFocus = true; canRead = false; await timer();
-  assert.equal(reads, 1, 'Stopped watchers must stop parsing');
-  console.log('Extension checks passed: pairing, one-shot sharing, follow on/off, permission denial, visible text filtering, focused-tab and sleeping-house guards.');
-})().catch(error => { console.error(error); process.exitCode = 1; });
+}
+
+async function watcherChecks() {
+  let clock=1000, heartbeat, timeout, changed, reads=0, following=false, focused=true;
+  const messages=[], events={};
+  const location={href:'https://example.com/article'};
+  const context=vm.createContext({Date:{now:()=>clock},location,
+    document:{visibilityState:'visible',hasFocus:()=>focused,documentElement:{},addEventListener:(name,fn)=>events[name]=fn},
+    window:{addEventListener:(name,fn)=>events[name]=fn},
+    MutationObserver:class {constructor(fn){changed=fn;}observe(){}},
+    browser:{runtime:{onMessage:event(),sendMessage:async message=>{
+      if(message.type==='may-observe')return {following};messages.push(message);return {ok:true};
+    }}},readPage:()=>{reads++;return {title:'Test',text:'Page text'};},
+    setInterval:(fn,ms)=>{heartbeat=fn;assert.equal(ms,1000);},setTimeout:fn=>{timeout=fn;return 1;}});
+  vm.runInContext(source('watch.js'),context);await flush();assert.equal(reads,0);
+  following=true;clock=2000;await heartbeat();assert.equal(reads,1);
+  clock=3000;await heartbeat();assert.equal(reads,1,'Static pages reuse extracted content on heartbeats');
+  assert.equal(messages.length,2);
+  changed();clock=4000;timeout();await flush();assert.equal(reads,2,'DOM changes trigger a fresh extraction');
+  focused=false;clock=5000;await heartbeat();assert.equal(reads,2);
+  focused=true;following=false;clock=6000;await heartbeat();assert.equal(reads,2);
+  following=true;location.href='https://example.com/changed';clock=7000;await heartbeat();
+  assert.equal(reads,3,'History changes without DOM mutations refresh the cache');
+  assert.ok(events.scroll && events.resize && events.timeupdate && events.popstate);
+}
+
+(async()=>{
+  const manifest=JSON.parse(source('manifest.json'));
+  assert.deepEqual(manifest.background.scripts,['background.js']);
+  assert.equal(manifest.background.service_worker,undefined);
+  assert.equal(manifest.browser_specific_settings.gecko.strict_min_version,'140.0');
+  const {page}=readerFixture();
+  assert.equal(page.url,'https://example.com/article');
+  assert.equal(page.text,'Visible paragraph');
+  assert.match(page.page_text,/Offscreen article body/);
+  assert.equal(page.metadata.description,'Page description');
+  assert.equal(page.metadata.canonical_url,'https://example.com/article');
+  assert.equal(page.links[0].url,'https://example.com/more');
+  assert.equal(page.captions,'Visible caption');
+  assert.equal(page.media[0].current_time,12);
+  assert.equal(page.reading.progress,300/1800);
+  assert.doesNotMatch(JSON.stringify(page),/PRIVATE_EDITABLE|HIDDEN_TEXT|HIDDEN_CAPTION|private=|user:secret/);
+  await popupChecks(page);
+  await watcherChecks();
+  const app=backgroundFixture();await flush();
+  await app.send({type:'configure-stream',enabled:true});
+  const sender={tab:{id:1,windowId:5},frameId:0,url:'https://example.com/article'};
+  await app.send({type:'focused-page',page},sender);
+  assert.equal(app.requests.filter(r=>r.url.endsWith('/page')).length,1);
+  assert.equal(app.requests.at(-1).headers.Authorization,'Bearer '+token);
+  assert.equal(app.requests.at(-1).body.session_id,session);
+  assert.equal(app.requests.at(-1).body.metadata.description,'Page description');
+  assert.ok(app.requests.every(r=>!r.url.endsWith('/status')),'Live updates must not stop when companions sleep');
+  app.setActive({id:1,windowId:5,url:'https://example.com/second',active:true});
+  await app.send({type:'focused-page',page:{...page,url:'https://example.com/second'}},sender);
+  assert.equal(app.requests.at(-1).body.url,'https://example.com/second','SPA routes must use the current tab, not Firefox\'s original sender URL');
+  app.setActive({id:1,windowId:5,url:'https://example.com/article',active:true});
+  const length=app.requests.length;
+  app.setFocused(false);await app.send({type:'focused-page',page},sender);assert.equal(app.requests.length,length);
+  app.setFocused(true);await app.send({type:'focused-page',page},{...sender,frameId:1});
+  await app.send({type:'focused-page',page},{...sender,tab:{...sender.tab,incognito:true}});
+  await app.send({type:'focused-page',page:{...page,url:'https://forged.example/'}},sender);
+  assert.equal(app.requests.length,length);
+  assert.equal(app.send({type:'configure-stream',enabled:false},sender),undefined,'Content scripts cannot control pairing/stream settings');
+  await app.send({type:'configure-stream',enabled:false});
+  assert.equal(app.requests.at(-1).body.state,'paused');
+  assert.ok(app.requests.at(-1).body.sequence>app.requests[0].body.sequence);
+  assert.equal(app.saved.following,false);
+  console.log('Firefox extension checks passed: native manifest/API, metadata and captions, form/hidden filtering, live heartbeat/cache/events, popup controls, focused/private/tab guards, stream ordering and pause clearing.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

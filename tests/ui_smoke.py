@@ -50,6 +50,16 @@ try:
     app.inbox.put({"title": "Controlled test", "url": "https://example.com/", "text": "A test page.", "automatic": False})
     pump()
     assert "Controlled test" in app.context_status.get()
+    session = '11111111-1111-4111-8111-111111111111'
+    app.inbox.put({'title':'Firefox live','url':'https://example.com/','text':'Latest page',
+                   'automatic':True,'session_id':session,'sequence':1})
+    pump()
+    app.observation = {'kind':'page','title':'Firefox live'}
+    app.inbox.put({'kind':'browser-state','state':'paused','session_id':session,'sequence':3})
+    app.inbox.put({'title':'Delayed page','url':'https://example.com/','text':'Old page',
+                   'automatic':True,'session_id':session,'sequence':2})
+    pump()
+    assert app.page is None and app.observation is None, 'Pausing clears context and rejects late page updates'
     with patch("desktop.companion_turn", return_value=Turn(speech="B-but I thought the moon was cheese!", used=500, memories=[{"target": "Byte", "text": "Pip thinks the moon is cheese."}])):
         app.request_turn("Pip", "Hang out")
         pump()

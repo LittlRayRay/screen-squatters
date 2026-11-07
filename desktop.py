@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from ai import DEFAULT_MODEL, companion_turn
-from bridge import BridgeServer, PORT
+from bridge import BridgeServer, BrowserFeed, PORT
 from games import Mafia, TicTacToe
 from house import CHARACTERS, House
 from habitat import Habitat
@@ -91,6 +91,7 @@ class ScreenSquatters:
         self.model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
         self.page = None
         self.page_time = 0
+        self.browser_feed = BrowserFeed()
         self.observation = None
         self.observation_time = 0
         self.capture_busy = False
@@ -518,7 +519,7 @@ class ScreenSquatters:
         model = tk.Entry(connection, bg=PANEL, fg=FG, insertbackground=FG, relief="flat")
         model.insert(0, self.model)
         model.pack(fill="x", ipady=8, pady=(0, 14))
-        text(connection, "Browser pairing code: load the extension folder in Chrome/Edge, then paste this in its popup.")
+        text(connection, "Firefox pairing code: load extension/manifest.json at about:debugging, then paste this in the add-on popup and enable live updates.")
         code = tk.Entry(connection, bg=PANEL, fg=ACCENT, relief="flat")
         code.insert(0, self.token)
         code.configure(state="readonly", readonlybackground=PANEL)
@@ -533,7 +534,7 @@ class ScreenSquatters:
             win.destroy()
             self.next_turn = time.monotonic() + 3
         self.button(connection, "Use for this session", save, True).pack(anchor="e", pady=8)
-        text(awareness, "The browser extension can share once, or follow the focused webpage after you enable its optional site access. It sends visible text, not the whole HTML document.")
+        text(awareness, "The Firefox extension can continuously update focused-page text, metadata, reading position and captions, even while everyone sleeps. It sends updates locally; AI requests still follow the normal conversation schedule.")
         text(awareness, "Optional screenshot fallback captures the foreground window periodically while at least one companion is awake. Fresh matching browser text is preferred. The house's own windows and Windows sign-in surfaces are skipped.")
         tk.Checkbutton(awareness, text="Enable periodic foreground-window screenshots", variable=self.screen_enabled,
                        command=self.awareness_changed, bg=BG, fg=FG, selectcolor=PANEL,
@@ -823,6 +824,15 @@ class ScreenSquatters:
         try:
             while True:
                 page = self.inbox.get_nowait()
+                if not self.browser_feed.accept(page):
+                    continue
+                if page.get("kind") == "browser-state":
+                    self.page, self.page_time = None, 0
+                    if self.observation and self.observation.get("kind") == "page":
+                        self.observation = None
+                    self.capture_epoch += 1
+                    self.context_status.set("Firefox feed " + page["state"] + " | browser context cleared")
+                    continue
                 self.page, self.page_time = page, time.monotonic()
                 self.context_status.set("Browser text received | " + page["title"][:65] + (" | following" if page.get("automatic") else " | shared snapshot"))
                 if not page.get("automatic"):

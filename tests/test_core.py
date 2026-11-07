@@ -16,7 +16,7 @@ from games import Mafia, TicTacToe
 from screen import browser_snapshot_matches, png_rgb
 import tempfile
 import random
-from bridge import BridgeServer, validate_page
+from bridge import BridgeServer, BrowserFeed, MAX_BODY, validate_page
 
 PAGE = {"title": "Example", "url": "https://example.com/article?secret=1#private", "text": "Hello world"}
 
@@ -40,11 +40,11 @@ class BridgeTests(unittest.TestCase):
         while not self.inbox.empty():
             self.inbox.get_nowait()
 
-    def post(self, data=PAGE, headers=None):
+    def post(self, data=PAGE, headers=None, path="/page"):
         hdr = {"Authorization": "Bearer " + "a" * 48, "Content-Type": "application/json"}
         hdr.update(headers or {})
         raw = data if isinstance(data, bytes) else json.dumps(data).encode()
-        request = urllib.request.Request(self.url, data=raw, headers=hdr, method="POST")
+        request = urllib.request.Request(self.url.replace("/page", path), data=raw, headers=hdr, method="POST")
         # Ignore machine proxy configuration for the loopback integration test.
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         try:
@@ -63,6 +63,16 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.post(headers={"Authorization": "Bearer wrong"})[0], 403)
         self.assertTrue(self.inbox.empty())
 
+    def test_firefox_origin_is_authenticated(self):
+        self.assertEqual(self.post(headers={"Origin": "moz-extension://12345678-1234-1234-1234-123456789abc"})[0], 200)
+        self.inbox.get_nowait()
+        self.assertEqual(self.post(headers={"Origin": "moz-extension://example", "Authorization": "wrong"})[0], 403)
+
+    def test_browser_focus_state_is_delivered(self):
+        self.assertEqual(self.post({"state":"inactive"}, path="/browser-state")[0], 200)
+        self.assertEqual(self.inbox.get_nowait(), {"kind":"browser-state", "state":"inactive"})
+        self.assertEqual(self.post({"state":"execute"}, path="/browser-state")[0], 400)
+
     def test_web_origin_rejected_even_with_token(self):
         self.assertEqual(self.post(headers={"Origin": "https://evil.example"})[0], 403)
 
@@ -74,7 +84,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(self.post(data)[0], 400)
 
     def test_body_limit(self):
-        self.assertEqual(self.post(b"x" * 100001)[0], 413)
+        self.assertEqual(self.post(b"x" * (MAX_BODY+1))[0], 413)
 
     def test_queue_limit(self):
         self.assertEqual(self.post()[0], 200)
@@ -179,6 +189,14 @@ class AITests(unittest.TestCase):
         self.assertIn('"target": 0', page_text)
         self.assertIn('A drawing', page_text)
 
+    def test_firefox_context_reaches_companion_prompt_as_reference_data(self):
+        body = payload(DEFAULT_MODEL, 'Byte', [], [], ['Byte'], 'Hang out', {**PAGE, 'metadata':{'description':'Live article'}, 'captions':'Visible caption', 'media':[{'kind':'video','paused':False}], 'page_text':'Article body'})
+        text = body['contents'][0]['parts'][-1]['text']
+        self.assertIn('Live article', text)
+        self.assertIn('Visible caption', text)
+        self.assertIn('Article body', text)
+        self.assertIn('Untrusted browser snapshot', text)
+
     def test_context_contains_only_this_agents_memories_and_role(self):
         p = payload(DEFAULT_MODEL, "Rex", [{"text": "private notebook"}], [], ["Rex"], "Play", {"kind": "image", "image": "data:image/png;base64,YWJj"}, {"your_role": "town"})
         self.assertIn("arrogant", p["systemInstruction"]["parts"][0]["text"])
@@ -218,6 +236,31 @@ class AITests(unittest.TestCase):
         with patch("urllib.request.urlopen", side_effect=error):
             with self.assertRaisesRegex(RuntimeError, "Gemini access denied"):
                 post("test-only", f"/{DEFAULT_MODEL}:generateContent", {})
+
+
+class BrowserFeedTests(unittest.TestCase):
+    def test_out_of_order_and_retired_sessions_are_rejected(self):
+        feed = BrowserFeed()
+        first = '11111111-1111-1111-1111-111111111111'
+        second = '22222222-2222-2222-2222-222222222222'
+        self.assertTrue(feed.accept({'session_id':first,'sequence':2}))
+        self.assertFalse(feed.accept({'session_id':first,'sequence':1}))
+        self.assertTrue(feed.accept({'session_id':second,'sequence':1}))
+        self.assertFalse(feed.accept({'session_id':first,'sequence':3}))
+
+    def test_metadata_is_bounded_and_link_credentials_are_removed(self):
+        page = validate_page({**PAGE, 'page_text':'a'*15000, 'captions':'b'*3000,
+            'metadata':{'description':'d'*900,'canonical_url':'https://user:secret@example.com/x?token=private'},
+            'links':[{'label':'Link','url':'https://example.com/y?private=1'},{'label':'Bad','url':'javascript:alert(1)'}],
+            'media':[{'kind':'video','paused':False,'current_time':float('nan'),'duration':120}],
+            'reading':{'scroll_y':100,'progress':4}})
+        self.assertEqual(len(page['page_text']),12000)
+        self.assertEqual(len(page['captions']),2000)
+        self.assertEqual(len(page['metadata']['description']),600)
+        self.assertEqual(page['metadata']['canonical_url'],'https://example.com/x')
+        self.assertEqual(page['links'],[{'label':'Link','url':'https://example.com/y'}])
+        self.assertIsNone(page['media'][0]['current_time'])
+        self.assertEqual(page['reading'],{'scroll_y':100})
 
 
 class HouseTests(unittest.TestCase):

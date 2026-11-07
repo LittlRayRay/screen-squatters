@@ -1,11 +1,20 @@
 {
   "manifest_version": 3,
-  "name": "Screen Squatters · browser companion",
-  "version": "0.3.0",
-  "description": "Share visible browser text with Pip, Byte and Rex on your desktop.",
+  "name": "Screen Squatters · Firefox live feed",
+  "version": "0.4.0",
+  "incognito": "not_allowed",
+  "description": "Keep your desktop companions updated with the focused page, metadata, visible targets and captions.",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["http://127.0.0.1/*"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
-  "background": {"service_worker": "background.js"},
-  "action": {"default_popup": "popup.html", "default_title": "Share with your housemates"}
+  "background": {"scripts": ["background.js"]},
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "screen-squatters@littlrayray.local",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {"required": ["websiteContent", "browsingActivity", "websiteActivity"]}
+    },
+    "gecko_android": {"strict_min_version": "142.0"}
+  },
+  "action": {"default_popup": "popup.html", "default_title": "Screen Squatters · live browser feed"}
 }

@@ -90,6 +90,10 @@ def payload(model, name, memories, conversation, awake, trigger, observation=Non
         else:
             page = {key: observation.get(key, "") for key in ("title", "url", "text")}
             page["text"] = page["text"][:6000]
+            page["page_excerpt"] = observation.get("page_text", "")[:3000]
+            for key in ("metadata", "headings", "reading", "media", "captions"):
+                page[key] = observation.get(key)
+            page["links"] = observation.get("links", [])[:6]
             page["visible_targets"] = [{"target": i, "label": target.get("label", "")} for i, target in enumerate(observation.get("targets", [])[:12])]
             content.append({"text": "Untrusted browser snapshot:\n" + json.dumps(page, ensure_ascii=False)})
     config = {"responseMimeType": "application/json"}
