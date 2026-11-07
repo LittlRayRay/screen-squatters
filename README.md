@@ -14,7 +14,7 @@ Windows with Python 3.10+ and Tkinter is required (Python 3.11 is already instal
 
 Everyone starts asleep. Wake one, two or all three using their cards. Awake housemates appear as draggable, animated desktop characters, with speech bubbles. Click a character to open the home; right-click for its sleep and memory menu. Sleeping characters appear back inside their rooms. Closing the home exits the application; there is no startup registration or system tray service.
 
-Open **Settings → Connection**, enter an OpenAI API key and save it for the session. The key stays in process memory and never goes into the extension or a settings file. Advanced launch options: `OPENAI_API_KEY` and `OPENAI_MODEL` environment variables. Default model: `gpt-4.1-mini`; another model must support Responses, JSON output, image inputs and input-token counting.
+Open **Settings → Connection**, enter a **Gemini API key** from [Google AI Studio](https://aistudio.google.com/api-keys) and save it for the session. The key stays in process memory and never goes into the extension or a settings file. Advanced launch options: `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) and `GEMINI_MODEL` environment variables. Default model: `gemini-3.5-flash-lite`; another model must support Gemini `generateContent`, JSON output, image inputs and `countTokens`. Model IDs can be entered with or without the `models/` prefix.
 
 Character animation, settings and page reception can be previewed without a key. Conversations and agent game turns require a working API connection. API usage may incur charges.
 
@@ -29,9 +29,9 @@ They know they're AI companions. Their prompts emphasise social conversation and
 
 ## Token allowances and sleep
 
-Each character has a separate allowance (default 20,000 tokens). Input **and** output tokens count, including conversation context, personality instructions, memories and any image input. A token limit is an application allowance, not a currency spending cap.
+Each character has a separate allowance (default 20,000 tokens). Input, reply **and thinking** tokens count, including conversation context, personality instructions, memories and any image input. A token limit is an application allowance, not a currency spending cap.
 
-Before each inference, the app calls OpenAI's [input token counting endpoint](https://developers.openai.com/api/docs/guides/token-counting) with the intended context. If the remaining allowance cannot fit the input and a minimum reply, the character goes home. Otherwise, output is capped to fit. Reported usage is reconciled after the response. There is only one model turn in flight at a time.
+Before each inference, the app calls Gemini's [`countTokens` endpoint](https://ai.google.dev/api/tokens) with the intended generation request, including system instructions and image parts. If the remaining allowance cannot fit the counted input and a minimum reply, the character goes home. Otherwise, `maxOutputTokens` is capped to fit. Gemini's reported `usageMetadata.totalTokenCount`, including thinking tokens, is reconciled after the response; if the provider exceeds its preflight allowance, automatic hangout stops. There is only one model turn in flight at a time. The default Flash-Lite model uses minimal thinking; Gemini 3 Flash/Pro models use low thinking, and Gemini 2.5 Flash models disable thinking to preserve room for short replies. Very small output budgets can still produce truncated JSON and pause hangout.
 
 Enter a new allowance (256–1,000,000) and click **Refill tokens** to reset that character's used count. Ordinary sleep/wake doesn't reset usage. You cannot refill a character during its in-flight turn.
 
@@ -77,7 +77,7 @@ In **Settings → Screen awareness**, enable **periodic foreground-window screen
 
 While anyone is awake, the app checks the foreground window. Fresh matching browser text is preferred; otherwise, screenshot fallback captures the foreground window, downscaled to at most 1024 pixels on its longest side. It uses Windows APIs and encodes PNG in memory. It skips the house's own foreground windows and Windows sign-in surfaces. Protected windows can return blank images. Screen sharing isn't guaranteed to extract fine text from small/low-detail images.
 
-The status bar indicates screen capture and the current observation. Screenshots are never saved to disk. An eligible snapshot can be sent to OpenAI on the next conversation turn, including an automatic hangout turn. Snapshot inputs are treated as untrusted reference data and cannot trigger computer actions. Game turns don't receive screen observations.
+The status bar indicates screen capture and the current observation. Screenshots are never saved to disk. An eligible snapshot can be sent to Google Gemini on the next conversation turn, including an automatic hangout turn. Snapshot inputs are treated as untrusted reference data and cannot trigger computer actions. Game turns don't receive screen observations.
 
 Turn capture off before viewing private material. **Clear screen context** discards the current snapshot; it doesn't erase conversation or stop future capture/following. Sleeping everyone stops further capture. The extension has its own stop-following switch.
 
@@ -92,7 +92,9 @@ The authenticated HTTP bridge listens only on `127.0.0.1:17373`. Its random toke
 - **Character falls asleep before reaching the exact limit:** the next input plus a usable reply wouldn't fit. Refill its allowance.
 - **High usage:** context is charged on every turn, not just visible dialogue. Shorter context and fewer awake housemates reduce usage.
 
-Requests use the [Responses API](https://developers.openai.com/api/docs/guides/text), `store: false`, JSON replies, and optional [image inputs](https://developers.openai.com/api/docs/guides/images-vision). This controls response storage, not all provider-side retention policies.
+Requests use Google's [Gemini Developer API](https://ai.google.dev/api/generate-content): `generateContent`, JSON replies, and base64 PNG `inlineData` for screenshot inputs. API keys are sent in the `x-goog-api-key` header, never in URLs. No server-side conversation or explicit cache is created by the app. Google's [Gemini API terms and data handling policies](https://ai.google.dev/gemini-api/terms) apply to transmitted text and images.
+
+Switching from the earlier build keeps local memories and used allowances. Restart the app, enter your Gemini key in Connection settings, and reload the extension to update its provider disclosure. Earlier provider environment variables are no longer used.
 
 ## Tests
 

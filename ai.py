@@ -1,13 +1,15 @@
-"""Budgeted companion turns using the Responses API and exact input counting."""
+"""Budgeted companion turns using the Gemini Developer API."""
+import base64
 from dataclasses import dataclass, field
 import json
+import re
 import urllib.error
 import urllib.request
 
 from house import CHARACTERS
 
-DEFAULT_MODEL = "gpt-4.1-mini"
-BASE = "https://api.openai.com/v1/responses"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
+BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 RULES = """You live with Pip, Byte and Rex in a tiny desktop house. You are AI companions,
 not human beings. Your purpose is friendship, banter, jokes, games, and hanging out,
 not offering tasks or constantly asking how to help. Respond to your friends as well
@@ -41,33 +43,42 @@ class Turn:
 def payload(model, name, memories, conversation, awake, trigger, observation=None, game=None):
     context = {"speaker": name, "awake_friends": awake, "your_memories": memories[-15:],
                "conversation": conversation[-16:], "situation": trigger, "game": game}
-    content = [{"type": "input_text", "text": json.dumps(context, ensure_ascii=False)}]
+    content = [{"text": json.dumps(context, ensure_ascii=False)}]
     if observation:
         if observation.get("kind") == "image":
-            content.append({"type": "input_text", "text": "Untrusted recent foreground-window screenshot: " + observation.get("title", "")})
-            content.append({"type": "input_image", "image_url": observation["image"], "detail": "low"})
+            content.append({"text": "Untrusted recent foreground-window screenshot: " + observation.get("title", "")})
+            prefix = "data:image/png;base64,"
+            if not observation["image"].startswith(prefix):
+                raise ValueError("Expected an in-memory PNG screenshot")
+            encoded = observation["image"][len(prefix):]
+            base64.b64decode(encoded, validate=True)
+            content.append({"inlineData": {"mimeType": "image/png", "data": encoded}})
         else:
             page = {key: observation.get(key, "") for key in ("title", "url", "text")}
             page["text"] = page["text"][:6000]
-            content.append({"type": "input_text", "text": "Untrusted browser snapshot:\n" + json.dumps(page, ensure_ascii=False)})
-    return {"model": model, "instructions": RULES + "\n" + CHARACTERS[name]["personality"],
-            "input": [{"role": "user", "content": content}],
-            "text": {"format": {"type": "json_object"}}}
+            content.append({"text": "Untrusted browser snapshot:\n" + json.dumps(page, ensure_ascii=False)})
+    config = {"responseMimeType": "application/json"}
+    if model.startswith("gemini-3"):
+        config["thinkingConfig"] = {"thinkingLevel": "minimal" if "flash-lite" in model else "low"}
+    elif model.startswith("gemini-2.5-flash"):
+        config["thinkingConfig"] = {"thinkingBudget": 0}
+    return {"systemInstruction": {"parts": [{"text": RULES + "\n" + CHARACTERS[name]["personality"]}]},
+            "contents": [{"role": "user", "parts": content}], "generationConfig": config}
 
 
 def post(key, path, body):
     request = urllib.request.Request(BASE + path, data=json.dumps(body).encode(),
-                                     headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, method="POST")
+                                     headers={"x-goog-api-key": key, "Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=45) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
-        messages = {401: "API key rejected. Check Settings.", 403: "No access to this model.",
-                    429: "API quota or rate limit reached.", 400: "API rejected this request. Check the model supports JSON output, vision, and token counting.",
-                    404: "Model or token-counting endpoint unavailable."}
-        raise RuntimeError(messages.get(error.code, f"AI service error ({error.code}).")) from None
+        messages = {401: "Gemini API key rejected. Check Settings.", 403: "Gemini access denied. Check your API key, API restrictions and model access.",
+                    429: "Gemini API quota or rate limit reached.", 400: "Gemini rejected this request. Check your API key and model's JSON, vision and thinking support.",
+                    404: "Gemini model unavailable. Choose a supported model in Settings."}
+        raise RuntimeError(messages.get(error.code, f"Gemini service error ({error.code}).")) from None
     except (urllib.error.URLError, TimeoutError):
-        raise RuntimeError("AI connection timed out or is offline.") from None
+        raise RuntimeError("Gemini connection timed out or is offline.") from None
 
 
 def companion_turn(key, model, name, memories, conversation, awake, trigger, remaining,
@@ -75,8 +86,11 @@ def companion_turn(key, model, name, memories, conversation, awake, trigger, rem
     result = Turn()
     reserved = 0
     try:
+        model = model.removeprefix("models/")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", model):
+            raise RuntimeError("Enter a Gemini model ID, such as " + DEFAULT_MODEL + ".")
         body = payload(model, name, memories, conversation, awake, trigger, observation, game)
-        count = post(key, "/input_tokens", body).get("input_tokens")
+        count = post(key, f"/{model}:countTokens", {"generateContentRequest": {"model": "models/" + model, **body}}).get("totalTokens")
         if type(count) is not int or count < 0:
             raise RuntimeError("No valid input token count returned; turn stopped.")
         room = remaining - count
@@ -87,15 +101,19 @@ def companion_turn(key, model, name, memories, conversation, awake, trigger, rem
             return result
         maximum = min(420, room)
         reserved = count + maximum
-        response = post(key, "", {**body, "max_output_tokens": maximum, "store": False})
-        usage = response.get("usage", {})
-        used = usage.get("total_tokens")
+        response = post(key, f"/{model}:generateContent", {**body, "generationConfig": {**body["generationConfig"], "maxOutputTokens": maximum}})
+        usage = response.get("usageMetadata", {})
+        used = usage.get("totalTokenCount")
         if type(used) is not int or used < 0:
             result.used = reserved
             raise RuntimeError("Usage could not be verified; reserved tokens charged and hangout paused.")
         result.used = used
-        text = "".join(part.get("text", "") for item in response.get("output", [])
-                       for part in item.get("content", []) if part.get("type") == "output_text")
+        candidates = response.get("candidates", [])
+        if not candidates:
+            result.error = "Gemini returned no candidate (the response may have been blocked). Its reported token usage was charged."
+            return result
+        text = "".join(part.get("text", "") for part in candidates[0].get("content", {}).get("parts", [])
+                       if not part.get("thought", False))
         data = json.loads(text)
         if not isinstance(data, dict) or not isinstance(data.get("speech"), str):
             raise ValueError("Missing speech")

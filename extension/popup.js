@@ -93,7 +93,7 @@ follow.addEventListener("click", async () => {
       if (tab?.id && /^https?:\/\//.test(tab.url || "")) {
         await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["reader.js", "watch.js"]}).catch(() => {});
       }
-      status.textContent = "Following focused pages while housemates are awake. Other existing tabs may need a reload. AI hangout turns can send this text to OpenAI.";
+      status.textContent = "Following focused pages while housemates are awake. Other existing tabs may need a reload. AI hangout turns can send this text to Google Gemini.";
     }
   } catch (error) {
     status.textContent = error.message || "Couldn't change following. Try again.";

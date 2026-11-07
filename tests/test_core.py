@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ai import companion_turn, payload
+from ai import companion_turn, payload, post, DEFAULT_MODEL
 from house import House, CHARACTERS
 from games import Mafia, TicTacToe
 from screen import browser_snapshot_matches, png_rgb
@@ -97,9 +97,9 @@ class BridgeTests(unittest.TestCase):
 
 class AITests(unittest.TestCase):
     def run_turn(self, remaining=5000, responses=None, cancelled=None):
-        reply = {"usage": {"total_tokens": 340}, "output": [{"content": [{"type": "output_text", "text": json.dumps({"speech": "B-but what if the moon is cheese?", "memories": [{"target": "Byte", "text": "Pip has a moon cheese theory."}], "move": 4, "vote": "Rex"})}]}]}
-        with patch("ai.post", side_effect=responses or [{"input_tokens": 300}, reply]) as network:
-            result = companion_turn("test-only", "test-model", "Pip", [], [], ["Pip", "Byte"], "Hang out", remaining, PAGE, cancelled=cancelled)
+        reply = {"usageMetadata": {"totalTokenCount": 340, "thoughtsTokenCount": 10}, "candidates": [{"content": {"parts": [{"thought": True, "text": "private reasoning, not dialogue"}, {"text": json.dumps({"speech": "B-but what if the moon is cheese?", "memories": [{"target": "Byte", "text": "Pip has a moon cheese theory."}], "move": 4, "vote": "Rex"})}]}}]}
+        with patch("ai.post", side_effect=responses or [{"totalTokens": 300}, reply]) as network:
+            result = companion_turn("test-only", DEFAULT_MODEL, "Pip", [], [], ["Pip", "Byte"], "Hang out", remaining, PAGE, cancelled=cancelled)
             return result, network.call_args_list
 
     def test_exact_preflight_and_usage(self):
@@ -107,8 +107,13 @@ class AITests(unittest.TestCase):
         self.assertEqual(result.used, 340)
         self.assertEqual(result.move, 4)
         self.assertEqual(result.memories[0]["target"], "Byte")
-        self.assertEqual(calls[0].args[1], "/input_tokens")
-        self.assertFalse(calls[1].args[2]["store"])
+        self.assertEqual(calls[0].args[1], f"/{DEFAULT_MODEL}:countTokens")
+        self.assertEqual(calls[1].args[1], f"/{DEFAULT_MODEL}:generateContent")
+        counted = calls[0].args[2]["generateContentRequest"]
+        self.assertEqual(counted["model"], "models/" + DEFAULT_MODEL)
+        self.assertEqual(counted["contents"], calls[1].args[2]["contents"])
+        self.assertEqual(counted["systemInstruction"], calls[1].args[2]["systemInstruction"])
+        self.assertNotIn("private reasoning", result.speech)
 
     def test_no_inference_when_input_would_exceed_budget(self):
         result, calls = self.run_turn(remaining=350)
@@ -118,20 +123,20 @@ class AITests(unittest.TestCase):
 
     def test_output_is_capped_by_remaining_allowance(self):
         _result, calls = self.run_turn(remaining=450)
-        self.assertEqual(calls[1].args[2]["max_output_tokens"], 150)
+        self.assertEqual(calls[1].args[2]["generationConfig"]["maxOutputTokens"], 150)
 
     def test_uncertain_request_conservatively_charges_reservation(self):
-        result, _ = self.run_turn(responses=[{"input_tokens": 300}, RuntimeError("timeout")])
+        result, _ = self.run_turn(responses=[{"totalTokens": 300}, RuntimeError("timeout")])
         self.assertEqual(result.used, 720)
         self.assertIn("timeout", result.error)
 
     def test_malformed_reply_still_charged(self):
-        result, _ = self.run_turn(responses=[{"input_tokens": 300}, {"usage": {"total_tokens": 400}, "output": []}])
+        result, _ = self.run_turn(responses=[{"totalTokens": 300}, {"usageMetadata": {"totalTokenCount": 400}, "candidates": [{"content": {"parts": [{"text": "unfinished JSON"}]}}]}])
         self.assertEqual(result.used, 400)
         self.assertTrue(result.error)
 
     def test_missing_usage_fails_closed(self):
-        result, _ = self.run_turn(responses=[{"input_tokens": 300}, {"output": []}])
+        result, _ = self.run_turn(responses=[{"totalTokens": 300}, {"candidates": []}])
         self.assertEqual(result.used, 720)
         self.assertTrue(result.error)
 
@@ -143,9 +148,44 @@ class AITests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
     def test_context_contains_only_this_agents_memories_and_role(self):
-        p = payload("model", "Rex", [{"text": "private notebook"}], [], ["Rex"], "Play", {"kind": "image", "image": "data:image/png;base64,abc"}, {"your_role": "town"})
-        self.assertIn("arrogant", p["instructions"])
-        self.assertEqual(p["input"][0]["content"][-1]["type"], "input_image")
+        p = payload(DEFAULT_MODEL, "Rex", [{"text": "private notebook"}], [], ["Rex"], "Play", {"kind": "image", "image": "data:image/png;base64,YWJj"}, {"your_role": "town"})
+        self.assertIn("arrogant", p["systemInstruction"]["parts"][0]["text"])
+        self.assertEqual(p["contents"][0]["parts"][-1]["inlineData"], {"mimeType": "image/png", "data": "YWJj"})
+        self.assertEqual(p["generationConfig"]["responseMimeType"], "application/json")
+
+    def test_http_uses_google_host_and_key_header(self):
+        response = io.BytesIO(b'{"totalTokens": 20}')
+        with patch("urllib.request.urlopen", return_value=response) as network:
+            self.assertEqual(post("test-only", f"/{DEFAULT_MODEL}:countTokens", {"contents": []})["totalTokens"], 20)
+        request = network.call_args.args[0]
+        self.assertEqual(request.full_url, f"https://generativelanguage.googleapis.com/v1beta/models/{DEFAULT_MODEL}:countTokens")
+        self.assertEqual(request.get_header("X-goog-api-key"), "test-only")
+        self.assertNotIn("test-only", request.full_url)
+        self.assertIsNone(request.get_header("Authorization"))
+
+    def test_blocked_reply_charges_usage_without_crashing(self):
+        result, _ = self.run_turn(responses=[{"totalTokens": 300}, {"usageMetadata": {"totalTokenCount": 300}, "promptFeedback": {"blockReason": "SAFETY"}}])
+        self.assertEqual(result.used, 300)
+        self.assertIn("no candidate", result.error)
+
+    def test_thinking_config_matches_model_family(self):
+        def config(model):
+            return payload(model, "Pip", [], [], [], "Hi")["generationConfig"].get("thinkingConfig")
+        self.assertEqual(config(DEFAULT_MODEL), {"thinkingLevel": "minimal"})
+        self.assertEqual(config("gemini-3.8-flash"), {"thinkingLevel": "low"})
+        self.assertEqual(config("gemini-2.5-flash"), {"thinkingBudget": 0})
+
+    def test_invalid_model_never_calls_network(self):
+        with patch("ai.post") as network:
+            result = companion_turn("test-only", "https://evil.example/", "Pip", [], [], [], "Hi", 5000)
+        self.assertIn("model ID", result.error)
+        network.assert_not_called()
+
+    def test_api_errors_do_not_expose_key_or_provider_body(self):
+        error = urllib.error.HTTPError("https://generativelanguage.googleapis.com", 403, "Denied", {}, None)
+        with patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "Gemini access denied"):
+                post("test-only", f"/{DEFAULT_MODEL}:generateContent", {})
 
 
 class HouseTests(unittest.TestCase):

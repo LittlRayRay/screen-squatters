@@ -62,8 +62,8 @@ class ScreenSquatters:
         self.local = Path(data_dir) if data_dir else Path(__file__).resolve().parent / ".local"
         self.local.mkdir(parents=True, exist_ok=True)
         self.house = House(self.local / "house.json")
-        self.key = os.environ.get("OPENAI_API_KEY", "")
-        self.model = os.environ.get("OPENAI_MODEL", DEFAULT_MODEL)
+        self.key = os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
+        self.model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
         self.page = None
         self.page_time = 0
         self.observation = None
@@ -350,11 +350,11 @@ class ScreenSquatters:
             notebook.add(frame, text=title)
         def text(parent, value):
             tk.Label(parent, text=value, bg=BG, fg=FG, wraplength=480, justify="left", font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 10))
-        text(connection, "OpenAI API key (memory only, for this app session)")
+        text(connection, "Gemini API key (memory only, for this app session)")
         key = tk.Entry(connection, show="*", bg=PANEL, fg=FG, insertbackground=FG, relief="flat")
         key.insert(0, self.key)
         key.pack(fill="x", ipady=8, pady=(0, 14))
-        text(connection, "Model (must support Responses, JSON output, vision and input-token counting)")
+        text(connection, "Gemini model (JSON output, vision and token counting)")
         model = tk.Entry(connection, bg=PANEL, fg=FG, insertbackground=FG, relief="flat")
         model.insert(0, self.model)
         model.pack(fill="x", ipady=8, pady=(0, 14))
@@ -382,10 +382,10 @@ class ScreenSquatters:
         row.pack(fill="x", pady=8)
         tk.Label(row, text="Capture interval (seconds):", bg=BG, fg=FG).pack(side="left")
         tk.Spinbox(row, from_=15, to=300, increment=15, textvariable=self.capture_interval, width=6).pack(side="left", padx=10)
-        text(awareness, "A snapshot may be sent to OpenAI during the next conversation turn, including automatic hangout turns. Images stay in memory and are never saved to disk. Turn screenshots off before viewing anything private. This setting resets to OFF on app restart.")
+        text(awareness, "A snapshot may be sent to Google's Gemini API during the next conversation turn, including automatic hangout turns. Images stay in memory and are never saved to disk. Turn screenshots off before viewing anything private. This setting resets to OFF on app restart.")
         self.button(awareness, "Clear current snapshot", self.clear_context).pack(anchor="w", pady=10)
         text(reset, "Factory reset sends everyone home and removes all three characters' memories, token usage, conversation and current game. Personalities and default allowances are restored. Screen capture turns OFF. Your extension pairing and API connection are kept.")
-        text(reset, "Requests already submitted to OpenAI cannot be recalled. Reset does not delete provider-side data or undo API charges.")
+        text(reset, "Requests already submitted to Gemini cannot be recalled. Reset does not delete provider-side data or undo API charges.")
         self.button(reset, "Reset every companion to factory settings", self.reset_all, True).pack(anchor="w", pady=16)
 
     def awareness_changed(self):
