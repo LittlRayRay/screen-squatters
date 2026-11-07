@@ -91,11 +91,13 @@ function setup({url = 'https://example.com/article', injectionError = false, fet
   const nodes = ['First paragraph.', 'Second paragraph.'].map(textContent => ({textContent}));
   let index = -1;
   app.context.document = {
-    title: 'Example title', body: {},
-    querySelector: () => ({}),
+    title: 'Example title', body: {querySelectorAll: () => []},
+    querySelector: () => ({querySelectorAll: () => []}),
     createTreeWalker: () => ({nextNode() { index++; return index < nodes.length; }, get currentNode() { return nodes[index]; }})
   };
   app.context.location = {href: 'https://example.com/article?token=private#secret'};
+  app.context.innerWidth = 800; app.context.innerHeight = 600;
+  app.context.outerWidth = 800; app.context.outerHeight = 680;
   app.context.NodeFilter = {SHOW_TEXT: 4};
   const extracted = vm.runInContext('readPage()', app.context);
   assert.equal(extracted.url, 'https://example.com/article');
@@ -124,6 +126,14 @@ function setup({url = 'https://example.com/article', injectionError = false, fet
     return {nextNode() {return ++index < accepted.length;}, get currentNode() {return accepted[index];}};
   };
   assert.equal(vm.runInContext('readPage()', app.context).text, 'Visible sentence');
+  const heading = {innerText: 'Interesting heading', closest: () => null,
+    getAttribute: () => null, checkVisibility: () => true,
+    getBoundingClientRect: () => ({width: 100, height: 30, left: 20, right: 120, top: 20, bottom: 50})};
+  app.context.document.querySelector = () => ({querySelectorAll: () => [heading]});
+  const targeted = vm.runInContext('readPage()', app.context);
+  assert.equal(targeted.targets[0].label, 'Interesting heading');
+  assert.equal(targeted.targets[0].x, 70/800);
+  assert.equal(targeted.viewport.outerHeight, 680);
 
   let listener;
   let awake = true, focused = true, following = true;
@@ -137,7 +147,7 @@ function setup({url = 'https://example.com/article', injectionError = false, fet
     forwarded.push(JSON.parse(options.body)); return {ok: true};
   }});
   vm.runInContext(backgroundSource, worker);
-  const message = {type: 'focused-page', page: {title: 'Example', text: 'Visible', url: 'https://example.com/article?private=1'}};
+  const message = {type: 'focused-page', page: {title: 'Example', text: 'Visible', url: 'https://example.com/article?private=1', targets: [{label:'Heading',x:.3,y:.4}], viewport:{width:800,height:600}}};
   const sender = {tab: {id: 1, windowId: 1}, frameId: 0, url: 'https://example.com/article'};
   async function deliver(message, sender) {
     await new Promise(resolve => {if (listener(message, sender, resolve) !== true) resolve();});
@@ -146,6 +156,7 @@ function setup({url = 'https://example.com/article', injectionError = false, fet
   assert.equal(forwarded.length, 1);
   assert.equal(forwarded[0].url, 'https://example.com/article');
   assert.equal(forwarded[0].automatic, true);
+  assert.equal(forwarded[0].targets[0].label, 'Heading');
   awake = false; await deliver(message, sender);
   awake = true; focused = false; await deliver(message, sender);
   focused = true; following = false; await deliver(message, sender);

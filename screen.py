@@ -70,7 +70,11 @@ def foreground():
             kernel.CloseHandle(process)
     if executable in {"lockapp.exe", "logonui.exe", "credentialuibroker.exe"}:
         return None
+    rect = wt.RECT()
+    if not user.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
     return {"hwnd": hwnd, "title": title.value, "executable": executable,
+            "bounds": [rect.left, rect.top, rect.right, rect.bottom],
             "browser": executable in {"chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "opera.exe"}}
 
 
@@ -112,7 +116,7 @@ def capture_window(window):
         rgb = bytearray(out_w * out_h * 3)
         rgb[0::3], rgb[1::3], rgb[2::3] = raw[2::4], raw[1::4], raw[0::4]
         image = png_rgb(out_w, out_h, rgb)
-        return {"kind": "image", "title": window["title"],
+        return {"kind": "image", "title": window["title"], "bounds": [rect.left, rect.top, rect.right, rect.bottom],
                 "image": "data:image/png;base64," + base64.b64encode(image).decode("ascii")}
     finally:
         gdi.SelectObject(memory, previous)
@@ -124,3 +128,21 @@ def capture_window(window):
 def browser_snapshot_matches(window, page, age):
     return bool(window and window["browser"] and page and age < 15
                 and page.get("title") and page["title"].lower() in window["title"].lower())
+
+
+def make_noactivate(widget_id, clickthrough=False):
+    """Our own house/resident windows shouldn't take keyboard focus while moving."""
+    if os.name != "nt":
+        return
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    user.GetParent.argtypes, user.GetParent.restype = [wt.HWND], wt.HWND
+    user.GetWindowLongW.argtypes, user.GetWindowLongW.restype = [wt.HWND, ctypes.c_int], wt.LONG
+    user.SetWindowLongW.argtypes, user.SetWindowLongW.restype = [wt.HWND, ctypes.c_int, wt.LONG], wt.LONG
+    hwnd = user.GetParent(widget_id) or widget_id
+    style = user.GetWindowLongW(hwnd, -20)
+    user.SetWindowLongW(hwnd, -20, style | 0x08000000 | 0x80 | (0x20 if clickthrough else 0))
+
+
+def make_clickthrough(widget_id):
+    """Only our own decorative marker window: let clicks reach the app below it."""
+    make_noactivate(widget_id, clickthrough=True)

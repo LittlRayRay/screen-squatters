@@ -22,7 +22,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (!status.ok || !(await status.json()).awake) return;
     await fetch("http://127.0.0.1:17373/page", {
       method: "POST", headers, signal: AbortSignal.timeout(3000),
-      body: JSON.stringify({title: page.title.slice(0, 300), text: page.text, url: url.href, automatic: true})
+      body: JSON.stringify({title: page.title.slice(0, 300), text: page.text, url: url.href, automatic: true,
+                            targets: Array.isArray(page.targets) ? page.targets.slice(0, 12) : [], viewport: page.viewport || {}})
     });
   })().then(() => respond({ok: true})).catch(() => respond({ok: false}));
   return true;

@@ -1,5 +1,6 @@
 """Authenticated, loopback-only bridge. No third-party packages required."""
 import json
+import math
 import queue
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,8 +27,20 @@ def validate_page(value):
     if parts.port:
         host += ":" + str(parts.port)
     url = f"{parts.scheme}://{host}{parts.path}"
+    targets = []
+    for item in (value.get("targets") if isinstance(value.get("targets"), list) else [])[:12]:
+        if not isinstance(item, dict) or not isinstance(item.get("label"), str):
+            continue
+        if not all(type(item.get(key)) in (int, float) and math.isfinite(item[key]) and 0 <= item[key] <= 1 for key in ("x", "y")):
+            continue
+        targets.append({"label": item["label"][:80], "x": item["x"], "y": item["y"]})
+    viewport = value.get("viewport", {})
+    viewport = {key: viewport[key] for key in ("width", "height", "outerWidth", "outerHeight")
+                if isinstance(viewport, dict) and type(viewport.get(key)) in (int, float)
+                and math.isfinite(viewport[key]) and 1 <= viewport[key] <= 100000}
     return {"title": value["title"][:300], "url": url[:2048],
-            "text": value["text"][:MAX_TEXT], "automatic": value.get("automatic") is True}
+            "text": value["text"][:MAX_TEXT], "automatic": value.get("automatic") is True,
+            "targets": targets, "viewport": viewport}
 
 
 class BridgeServer(ThreadingHTTPServer):
@@ -82,6 +95,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 < length <= MAX_BODY:
+                # Drain a bounded oversized body so Windows can deliver the 413
+                # response instead of resetting a socket with unread request data.
+                if length > MAX_BODY:
+                    self.rfile.read(min(length, MAX_BODY+1))
                 self.reply(413, {"error": "Page payload is too large"})
                 return
             page = validate_page(json.loads(self.rfile.read(length)))

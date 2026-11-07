@@ -12,20 +12,38 @@ A little Windows desktop home for three AI housemates. They're here to hang out,
 
 Windows with Python 3.10+ and Tkinter is required (Python 3.11 is already installed on this laptop). Double-click **launch.cmd**, or run `python desktop.py` in this folder. If an older Pip instance is running, right-click its character and quit it first: both versions use port 17373.
 
-Everyone starts asleep. Wake one, two or all three using their cards. Awake housemates appear as draggable, animated desktop characters, with speech bubbles. Click a character to open the home; right-click for its sleep and memory menu. Sleeping characters appear back inside their rooms. Closing the home exits the application; there is no startup registration or system tray service.
+Only a small, borderless house appears on your desktop at launch. Click it: the front wall fades away to reveal three bedrooms and a little living room. Tap a character in their room to wake them; they walk out onto the desktop. Tap a room again to send that housemate home. Click the roof to put the front wall back. Drag the house to move it.
 
-Open **Settings → Connection**, enter a **Gemini API key** from [Google AI Studio](https://aistudio.google.com/api-keys) and save it for the session. The key stays in process memory and never goes into the extension or a settings file. Advanced launch options: `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) and `GEMINI_MODEL` environment variables. Default model: `gemini-3.5-flash-lite`; another model must support Gemini `generateContent`, JSON output, image inputs and `countTokens`. Model IDs can be entered with or without the `models/` prefix.
+Click a desktop character or the sofa to open an optional conversation window. Closing that window leaves the house and its residents running. Right-click the house for chat, games, settings, pause and quit. Right-click an individual character for chat, sleep or memory. There is no dashboard at startup, automatic startup registration or tray service.
+
+Right-click the house, open **Settings & memories → Connection**, enter a **Gemini API key** from [Google AI Studio](https://aistudio.google.com/api-keys) and save it for the session. The key stays in process memory and never goes into the extension or a settings file. Advanced launch options: `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) and `GEMINI_MODEL` environment variables. Default model: `gemini-3.5-flash-lite`; another model must support Gemini `generateContent`, JSON output, image inputs and `countTokens`. Model IDs can be entered with or without the `models/` prefix.
 
 Character animation, settings and page reception can be previewed without a key. Conversations and agent game turns require a working API connection. API usage may incur charges.
 
 ## Hang out
 
-- Wake any combination of housemates and type into the living room. Each awake character gets a separate turn and can react to what the others said.
-- **Let awake housemates hang out** enables automatic conversation: one character speaks approximately every 25 seconds after a turn completes, rotating among awake characters. It starts enabled, but no requests run until a character is awake and an API key is present.
+- Wake any combination of housemates and click one to chat. Each awake character gets a separate turn and can react to what the others said. They glance toward the friend who spoke previously.
+- **Automatic conversation** (house context menu or Housemates settings) enables one character to speak approximately every 25 seconds after a turn completes, rotating among awake characters. It starts enabled, but no requests run until a character is awake and an API key is present.
 - Uncheck it for conversation only when you send a message. Game turns continue while a game is active.
-- **Everyone home** sends all three to sleep and stops future AI turns and screenshots. A request already submitted may still finish and be charged.
+- **Everyone home / pause** sends all three walking home and stops future AI turns and screenshots. Their natural wake cycle stays paused until you wake someone or toggle **Autonomous life** off and back on. A request already submitted may still finish and be charged.
 
 They know they're AI companions. Their prompts emphasise social conversation and distinctive personalities rather than task completion. They have no tools to control your computer or browse independently.
+
+## A life on the desktop
+
+Autonomous life starts enabled. Everyone initially sleeps inside; their first natural wake times are staggered 45–120 seconds after startup. Each housemate wanders at a leisurely pace, stays on the primary display, and normally rests after 4–8 minutes awake. Rest lasts roughly 90–210 seconds before an eligible housemate wakes again. Gemini can also decide to wander or rest during a conversation turn. Game participants defer their natural rest cycle until the game ends.
+
+Local movement and rhythm timers use no API tokens. Conversations still use each character's allowance. Budget exhaustion prevents automatic waking until you refill; there is no automatic refill. Moving or spontaneously waking windows don't take keyboard focus. Dragging a character holds off their next movement for 20 seconds so they don't fight your placement.
+
+Disable **Autonomous life** from the house context menu or **Settings → Housemates** to stop automatic wandering and wake/rest cycles; explicit sleep still lets them walk home. Manual wake, chat and dragging remain available. Rhythms restart with everyone asleep on app launch. The house and its context menu remain available even when everyone is asleep.
+
+## Looking at something interesting
+
+During an ordinary AI turn, a housemate may choose an interest from its current observation. Browser snapshots include up to 12 visible headings, links, buttons or labelled media, with their viewport positions. Gemini chooses a target by index; the app resolves its location. With screenshot fallback, Gemini can identify a point within the image instead.
+
+The housemate walks beside the target, looks at it, raises an arm, and shows a small coloured marker while saying its line. The marker lets pointer input pass through. They don't click, move your mouse or type into another app. Gestures are cleared if the foreground window changes, moves/resizes, or the browser target metadata changes. Old single-share snapshots without current window geometry can be discussed but cannot position a character.
+
+Browser placement estimates the content viewport below the browser toolbar; side panels, unusual browser chrome and display scaling can make pointing approximate. Movement stays on the primary display. Screenshot understanding and interest selection depend on Gemini and can be mistaken. Game turns don't choose screen interests. Local wandering and return-home animations work without model inference.
 
 ## Token allowances and sleep
 
@@ -33,7 +51,7 @@ Each character has a separate allowance (default 20,000 tokens). Input, reply **
 
 Before each inference, the app calls Gemini's [`countTokens` endpoint](https://ai.google.dev/api/tokens) with the intended generation request, including system instructions and image parts. If the remaining allowance cannot fit the counted input and a minimum reply, the character goes home. Otherwise, `maxOutputTokens` is capped to fit. Gemini's reported `usageMetadata.totalTokenCount`, including thinking tokens, is reconciled after the response; if the provider exceeds its preflight allowance, automatic hangout stops. There is only one model turn in flight at a time. The default Flash-Lite model uses minimal thinking; Gemini 3 Flash/Pro models use low thinking, and Gemini 2.5 Flash models disable thinking to preserve room for short replies. Very small output budgets can still produce truncated JSON and pause hangout.
 
-Enter a new allowance (256–1,000,000) and click **Refill tokens** to reset that character's used count. Ordinary sleep/wake doesn't reset usage. You cannot refill a character during its in-flight turn.
+In **Settings → Housemates**, enter a new allowance (256–1,000,000) and click **Refill tokens** to reset that character's used count. Ordinary sleep/wake doesn't reset usage. You cannot refill a character during its in-flight turn.
 
 The allowance remaining for an in-flight request is reserved on disk before sending. On success, unused reservation is returned. If usage cannot be verified, a conservative reservation is charged and automatic hangout pauses. If the app is closed or crashes during a request, the entire remaining reservation is counted on restart because the provider may still have billed it. This favours stopping over silently overspending; explicit refill/reset is available. Usage reported by the provider remains authoritative for billing.
 
@@ -49,7 +67,7 @@ Memories, allowances and usage are saved in `.local/house.json`, which is exclud
 
 ## Games
 
-**Tic-tac-toe:** wake a housemate, click the game button and choose an opponent. With two or more awake, you can also watch the first two play each other. Click squares on your turn. The local engine validates turn order, occupied squares, wins and draws; a model's invalid move falls back to the first open square.
+**Tic-tac-toe:** wake a housemate, right-click the house, choose **Play a game → Tic-tac-toe** and pick an opponent. With two or more awake, you can also watch the first two play each other. Click squares on your turn. The local engine validates turn order, occupied squares, wins and draws; a model's invalid move falls back to the first open square.
 
 **Mafia:** wake all three. The four players are you, Pip, Byte and Rex, with one randomly assigned mafia member and three townsfolk. Everyone gets a discussion turn and a vote; ties eliminate nobody. At night the mafia secretly chooses one player to eliminate. The town wins by voting out the mafia; the mafia wins at parity. Eliminated players spectate. Your own role appears in the game window; each model receives only its own role. Night speech isn't published, and per-character token counters are hidden during Mafia to avoid revealing the actor. There are no doctor/detective roles in this four-player version.
 
@@ -77,9 +95,9 @@ In **Settings → Screen awareness**, enable **periodic foreground-window screen
 
 While anyone is awake, the app checks the foreground window. Fresh matching browser text is preferred; otherwise, screenshot fallback captures the foreground window, downscaled to at most 1024 pixels on its longest side. It uses Windows APIs and encodes PNG in memory. It skips the house's own foreground windows and Windows sign-in surfaces. Protected windows can return blank images. Screen sharing isn't guaranteed to extract fine text from small/low-detail images.
 
-The status bar indicates screen capture and the current observation. Screenshots are never saved to disk. An eligible snapshot can be sent to Google Gemini on the next conversation turn, including an automatic hangout turn. Snapshot inputs are treated as untrusted reference data and cannot trigger computer actions. Game turns don't receive screen observations.
+The porch light is yellow while screenshot capture is enabled and someone is awake, mint when fresh browser text is available, and dim otherwise. Screenshots are never saved to disk. An eligible snapshot can be sent to Google Gemini on the next conversation turn, including automatic hangout. Snapshot inputs are untrusted reference data and cannot trigger actions in other apps. Game turns don't receive screen observations.
 
-Turn capture off before viewing private material. **Clear screen context** discards the current snapshot; it doesn't erase conversation or stop future capture/following. Sleeping everyone stops further capture. The extension has its own stop-following switch.
+Turn capture off before viewing private material. **Settings → Screen awareness → Clear current snapshot** discards the snapshot; it doesn't erase conversation or stop future capture/following. Sleeping everyone stops further capture. The extension has its own stop-following switch.
 
 ## Connection and troubleshooting
 

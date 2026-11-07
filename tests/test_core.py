@@ -165,6 +165,20 @@ class AITests(unittest.TestCase):
         self.assertEqual(result.used, 0)
         self.assertEqual(len(calls), 1)
 
+    def test_model_activity_is_a_bounded_body_intent(self):
+        for activity, expected in (("inspect", "inspect"), ("rest", "rest"), ("execute-command", "stay"), ([], "stay")):
+            data = {"speech": "Look at this.", "activity": activity, "interest": {"target": 0}}
+            reply = {"usageMetadata": {"totalTokenCount": 340}, "candidates": [{"content": {"parts": [{"text": json.dumps(data)}]}}]}
+            result, _ = self.run_turn(responses=[{"totalTokens": 300}, reply])
+            self.assertEqual(result.activity, expected)
+            self.assertEqual(result.interest, {"target": 0})
+
+    def test_page_interest_choices_are_grounded_in_visible_targets(self):
+        p = payload(DEFAULT_MODEL, "Byte", [], [], ["Byte"], "Hang out", {**PAGE, "kind": "page", "targets": [{"label": "A drawing", "x": .2, "y": .3}]})
+        page_text = p["contents"][0]["parts"][-1]["text"]
+        self.assertIn('"target": 0', page_text)
+        self.assertIn('A drawing', page_text)
+
     def test_context_contains_only_this_agents_memories_and_role(self):
         p = payload(DEFAULT_MODEL, "Rex", [{"text": "private notebook"}], [], ["Rex"], "Play", {"kind": "image", "image": "data:image/png;base64,YWJj"}, {"your_role": "town"})
         self.assertIn("arrogant", p["systemInstruction"]["parts"][0]["text"])

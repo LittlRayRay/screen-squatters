@@ -27,13 +27,21 @@ def pump():
 
 try:
     pump()
+    assert root.overrideredirect()
+    assert not app.chat.winfo_viewable(), "Only the house should open at launch"
+    assert not app.habitat.open
+    app.habitat.tap(180, 200)
+    assert app.habitat.open
+    app.habitat.tap(85, 160)
+    assert app.house.agents['Pip']['awake']
+    app.show_chat()
+    pump()
     assert app.question.winfo_viewable()
-    assert app.question.winfo_rooty() + app.question.winfo_height() <= root.winfo_rooty() + root.winfo_height()
+    assert app.question.winfo_rooty() + app.question.winfo_height() <= app.chat.winfo_rooty() + app.chat.winfo_height()
     assert app.send_button.winfo_viewable()
-    for name in app.cards:
-        assert app.cards[name]['toggle'].winfo_viewable()
     for name in app.house.agents:
-        app.toggle(name)
+        if not app.house.agents[name]['awake']:
+            app.toggle(name)
     pump()
     assert len(app.awake()) == 3
     assert all(win.winfo_viewable() for win, _canvas in app.floaters.values())
@@ -48,6 +56,15 @@ try:
     assert app.house.agents["Pip"]["used"] == 500
     assert app.house.agents["Byte"]["memories"][0]["from"] == "Pip"
     assert "moon was cheese" in app.transcript.get("1.0", "end")
+    # A model-selected target moves the body beside the current observed window.
+    app.intent_contexts['Pip'] = ({'kind':'image','window_id':123,'bounds':[0,0,800,600]}, time.monotonic())
+    with patch('desktop.foreground', return_value={'hwnd':123,'bounds':[0,0,800,600]}):
+        app.apply_intent('Pip', Turn(speech='Look at that!', activity='inspect', interest={'x':.5,'y':.5,'label':'A test drawing'}))
+    assert app.world.residents['Pip'].mode == 'approaching'
+    assert app.world.residents['Pip'].gaze == (400,300)
+    with patch('desktop.foreground', return_value={'hwnd':456,'bounds':[0,0,800,600]}):
+        app.validate_interests()
+    assert app.world.residents['Pip'].interest is None
     app.start_ttt("You", "Byte")
     app.game_action(0)
     with patch("desktop.companion_turn", return_value=Turn(speech="Centre square, obviously.", used=400, move=4)):
@@ -66,6 +83,13 @@ try:
     app.show_settings()
     pump()
     assert app.settings.winfo_viewable()
+    notebook = app.settings.winfo_children()[0]
+    notebook.select(1)
+    pump()
+    for name in app.cards:
+        toggle = app.cards[name]['toggle']
+        assert toggle.winfo_viewable()
+        assert toggle.winfo_rooty()+toggle.winfo_height() <= app.settings.winfo_rooty()+app.settings.winfo_height()
     app.settings.destroy()
     # Test native PNG capture ONLY if our controlled test window is foreground.
     if os.name == "nt":
@@ -86,6 +110,10 @@ try:
             print("Native capture skipped: Windows kept another app foreground; no screenshot taken.")
     app.sleep_all()
     assert not app.awake()
+    assert app.world.paused
+    for i in range(300):
+        app.world.step(.15, time.monotonic()+i*.15, autonomous=False)
+    pump()
     assert all(not win.winfo_viewable() for win, _canvas in app.floaters.values())
     old_generation = app.generation
     with patch("desktop.messagebox.askyesno", return_value=True):
@@ -96,7 +124,7 @@ try:
     app.handle_turn(old_generation, 0, "Pip", Turn(speech="STALE REPLY", used=500))
     assert "STALE REPLY" not in app.transcript.get("1.0", "end")
     assert app.house.agents["Pip"]["used"] == 0
-    print("UI smoke passed: home/composer, three floating characters, page reception, cross-agent memory, charged AI turns, tic-tac-toe, Mafia, settings, sleep, reset and stale-reply isolation.")
+    print("UI smoke passed: house-only launch, cutaway/tap-to-wake, optional chat, wandering bodies, screen approach and stale-target cancellation, shared memory, both games, return home, pause and reset.")
 finally:
     app.quit()
     temporary.cleanup()

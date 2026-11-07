@@ -29,5 +29,18 @@ function readPage() {
   url.hash = "";
   url.username = "";
   url.password = "";
-  return {title: document.title.slice(0, 300), url: url.href, text: chunks.join("\n").slice(0, 24000)};
+  const targets = [];
+  const viewport = {width: innerWidth, height: innerHeight, outerWidth: outerWidth || innerWidth, outerHeight: outerHeight || innerHeight};
+  for (const element of root.querySelectorAll("h1,h2,h3,a,button,img,video,figcaption")) {
+    if (targets.length >= 12) break;
+    if (element.closest("[hidden],[aria-hidden='true'],[contenteditable]:not([contenteditable='false'])")) continue;
+    if (typeof element.checkVisibility === "function" && !element.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) continue;
+    const rect = element.getBoundingClientRect();
+    if (!rect.width || !rect.height || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) continue;
+    const label = (element.getAttribute("alt") || element.getAttribute("aria-label") || element.innerText || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!label || targets.some(target => target.label === label)) continue;
+    targets.push({label, x: (Math.max(0, rect.left)+Math.min(innerWidth, rect.right))/2/innerWidth,
+                  y: (Math.max(0, rect.top)+Math.min(innerHeight, rect.bottom))/2/innerHeight});
+  }
+  return {title: document.title.slice(0, 300), url: url.href, text: chunks.join("\n").slice(0, 24000), targets, viewport};
 }
