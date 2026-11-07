@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="popup.css">
+  <title>Share with Pip</title>
+</head>
+<body>
+  <header><span class="face" aria-hidden="true">•ᴗ•</span><div><h1>hello, pip.</h1><p>A little context for your little friend.</p></div></header>
+  <main>
+    <label for="code">Desktop pairing code</label>
+    <input id="code" type="password" placeholder="Paste from Pip → Settings" autocomplete="off" spellcheck="false">
+    <p class="hint">Saved in this browser only. Your AI key belongs in the desktop app.</p>
+    <button id="share">Share this page</button>
+    <p id="status" role="status" aria-live="polite">Open Pip on your desktop first.</p>
+    <details><summary>What gets shared?</summary><p>A snapshot of the page's readable text and title, plus its URL without query or fragment. Up to 24,000 characters. No screenshots or form field values are collected. Text already displayed on a page may still be private.</p><p>The snapshot goes to Pip on this laptop. Pip sends it to OpenAI only when you ask an AI question. Share again after changing pages.</p></details>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
