@@ -152,6 +152,25 @@ class House:
                 self.agents = defaults()
                 self.warning = "Saved house data could not be read. Defaults loaded; check .local/house.json before saving."
 
+    def apply_window_play_request(self):
+        """Consume this user's explicit preset request only after the app binds its port."""
+        request = self.path.parent/'window-play-request.json'
+        if not request.exists():
+            return False
+        try:
+            if json.loads(request.read_text(encoding='utf-8')).get('preset') != 'chaos':
+                return False
+            from window_world import chaos_options
+            updated = chaos_options(self.options)
+            self.options.clear()
+            self.options.update(updated)
+            self.save()
+            request.unlink()
+            return True
+        except (ValueError,OSError,AttributeError):
+            self.warning = 'The requested window-play preset could not be saved; it will be retried next launch.'
+            return False
+
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = deepcopy(self.agents)

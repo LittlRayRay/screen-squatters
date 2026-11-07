@@ -21,10 +21,10 @@ from ball_art import draw_friend
 from habitat import Habitat
 from behaviour import interest_point
 from cinema import movie_command
-from window_world import WindowWorld, clean_options
+from window_world import WindowWorld, clean_options, chaos_options
 from social import Social, throw_velocity
 from desktop_settings import windows_panel, social_panel
-from attention import Attention, screen_remark
+from attention import Attention
 from game_social import MINIMUM, KINDS, OFFERS, DECLINES, occasional_refusal
 from screen import browser_snapshot_matches, capture_window, foreground, make_noactivate
 
@@ -45,6 +45,8 @@ class ScreenSquatters:
         self.last_windows_poll = 0
         self.last_hook_stamp = 0
         self.window_notice = False
+        self.screen_change_context = None
+        self.screen_change_at = 0
         self.last_window_notice = 0
         self.attention = Attention()
         self.browser_paused = {}
@@ -101,6 +103,7 @@ class ScreenSquatters:
             self.server = BridgeServer(self.token, self.inbox, port=port)
         except OSError:
             raise RuntimeError("Port 17373 is busy. Quit the other Screen Squatters instance first.") from None
+        self.house.apply_window_play_request()
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         root.title("Screen Squatters | home")
         root.configure(bg=BG)
@@ -992,7 +995,38 @@ class ScreenSquatters:
         self.join_next_game = True
         self.note('You will join the next hand or game, after the current one finishes.')
 
+    def window_play_tick(self,now):
+        names = [name for name in self.awake() if not self.world.residents[name].picked_up]
+        if not names:
+            self.windows.status = 'Wake a housemate to start window play.'
+            return
+        level = self.house.options['playfulness']
+        interval = {0:1e9,1:24,2:10,3:5,4:2}[level]
+        activity_paused = (self.game or self.movie_mode.get()) and not self.house.options['play_during_activities']
+        if self.pending or not names or activity_paused or now-self.last_mischief<interval:
+            return
+        self.last_mischief = now
+        actor = self.world.rng.choice(names)
+        key = self.windows.play(actor,self.world.rng,now) if level else None
+        if key and self.world.movement_enabled and self.autonomy.get():
+            item = self.windows.windows[key]
+            self.world.inspect(actor,(item['rect'][0]+20,item['rect'][1]+30,'a playful window'),now)
+            if self.world.residents[actor].interest:
+                self.native_interests[actor] = key
+
+    def enable_chaos(self):
+        self.windows.overrides.clear()
+        self.update_options(chaos_options(self.house.options))
+
+    def pause_window_play(self):
+        self.windows.animations.clear()
+        self.house.options['window_control'] = False
+        self.windows.status = 'Window play paused.'
+        self.save()
+
     def scene_tick(self,now):
+        # Window play must not be starved by chatter, typing or screen notifications.
+        self.window_play_tick(now)
         if self.busy or self.pending or self.speech_pending():
             return
         if self.deferred_game:
@@ -1013,26 +1047,14 @@ class ScreenSquatters:
         if self.autonomous_game and self.game and self.game.result and now-self.game_done_at>20:
             self.cancel_game('The housemates put their game away.')
         names = self.awake()
-        private = isinstance(self.game,Mafia) and self.game.phase=='night' and not self.game.result
-        if names and self.house.options['screen_comments'] and not private and now-self.attention.last_spoken>=3:
+        if names and self.house.options['screen_comments'] and not self.game and not self.movie_mode.get():
             def allowed(event):
                 return event.get('source') != 'native' or (self.house.options['window_awareness'] and self.windows.public(event['window'],event['_record']) is not None)
-            changes = self.attention.take(allowed)
-            if changes:
-                self.last_reactor = (self.last_reactor+1)%len(names)
-                self.append(names[self.last_reactor],screen_remark(names[self.last_reactor],changes,self.world.rng),blocking=not isinstance(self.game,Poker))
-                self.attention.last_spoken = now
-                return
-        level = self.house.options['playfulness']
-        interval = {0:1e9,1:30,2:14,3:7}[level]
-        if names and not self.game and not self.movie_mode.get() and now-self.last_mischief>=interval:
-            self.last_mischief = now
-            actor = self.world.rng.choice(names)
-            key = self.windows.play(actor,self.world.rng,now) if level else None
-            if key and self.world.movement_enabled and self.autonomy.get():
-                item = self.windows.windows[key]
-                self.world.inspect(actor,(item['rect'][0]+20,item['rect'][1]+30,'a permitted window'),now)
-                self.native_interests[actor] = key
+            change = self.attention.occasional(now,self.world.rng,allowed)
+            if change and self.hangout.get() and self.key:
+                self.screen_change_context = change
+                self.screen_change_at = now
+                self.next_turn = min(self.next_turn,now+3)
         if names and not self.game and not self.movie_mode.get() and self.hangout.get() and now>=self.next_game_offer and len(names)>=2:
             starter = self.world.rng.choice(names)
             available = [kind for kind in KINDS if len(names)>=MINIMUM[kind]]
@@ -1087,11 +1109,12 @@ class ScreenSquatters:
                         index = (self.last_speaker + offset) % len(names)
                         if names[index] in ready:
                             self.last_speaker = index
-                            notice = bool(self.window_notice and now-self.window_notice<60 and now-self.last_window_notice>20 and not self.movie_mode.get())
+                            notice = self.screen_change_context if not self.movie_mode.get() and now-self.screen_change_at<25 else None
+                            self.screen_change_context = None
                             if notice:
-                                self.window_notice = False
+                                self.screen_change_context = None
                                 self.last_window_notice = now
-                            self.request_turn(names[index], "React briefly to the recently opened window in desktop metadata, if interesting. Only use permitted window play; do not guess its contents." if notice else "Watch this moment quietly. Only react briefly if this frame or caption gives you something specific to react to; otherwise leave speech empty." if self.movie_mode.get() else "Hang out naturally. Reply to something a friend just said, include a quiet friend, or notice something in the supplied context. Silence is okay: keep it short.")
+                            self.request_turn(names[index], 'A recent task change may be interesting: '+str(notice)+'. Only comment if you have something natural to add; otherwise continue the conversation or stay quiet. Never report window/tab counts or announce routine UI events.' if notice else "Watch this moment quietly. Only react briefly if this frame or caption gives you something specific to react to; otherwise leave speech empty." if self.movie_mode.get() else "Hang out naturally. Reply to a friend or talk about an interest. Screen context is optional background: do not narrate routine app/tab changes or report event counts. Silence is okay.")
                             break
         self.root.after(500, self.tick)
 
@@ -1150,8 +1173,6 @@ class ScreenSquatters:
                         if any(self.windows.public(key,self.windows.windows[key]) for key in opened):
                             now = time.monotonic()
                             self.window_notice = now
-                            if self.hangout.get() and self.awake() and not self.game and not self.movie_mode.get() and now-self.last_window_notice>20:
-                                self.next_turn = min(self.next_turn,now+5)
                         refresh = getattr(self,'window_settings_refresh',None)
                         if refresh:
                             refresh()
@@ -1432,6 +1453,9 @@ class ScreenSquatters:
         menu.add_command(label="Memories", command=lambda: self.show_memories(name))
         menu.add_checkbutton(label="Stand still (everyone)", variable=self.stand_still, command=self.stand_still_changed)
         menu.add_checkbutton(label="Movie mode", variable=self.movie_mode, command=self.set_movie_mode)
+        menu.add_separator()
+        menu.add_command(label="Pause window play", command=self.pause_window_play)
+        menu.add_command(label="Undo last window move", command=self.windows.undo)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -1441,6 +1465,7 @@ class ScreenSquatters:
         if self.closing:
             return
         self.frame += 1
+        self.windows.animate()
         self.world.physics_enabled = self.house.options['physics']
         self.world.gravity = self.house.options['gravity']
         self.world.bounce = self.house.options['bounce']

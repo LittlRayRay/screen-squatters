@@ -128,8 +128,10 @@ try:
     app.house.options['window_control'] = True
     app.house.options['window_awareness'] = True
     app.last_mischief = 0
+    app.busy = True
     with patch.object(app.windows,'play',return_value=target),patch.object(app.world.rng,'choice',return_value='Cody'):
         app.scene_tick(time.monotonic())
+    app.busy = False
     with patch('desktop.foreground',return_value=None):
         app.validate_interests()
     assert app.world.residents['Cody'].interest is not None
@@ -306,12 +308,13 @@ try:
     app.house.options.update(game_invites=False,autoplay_games=False)
     finish_speech()
     app.house.options['screen_comments'] = True
+    previous = app.transcript.get('1.0','end')
     app.attention.add({'event':'tab-opened','event_id':'fixture-open','source':'browser'})
     app.attention.add({'event':'tab-closed','event_id':'fixture-close','source':'browser'})
     app.scene_tick(time.monotonic()+5)
     assert not app.attention.pending
     finish_speech()
-    assert 'tabs opened' in app.transcript.get('1.0','end') and 'tabs closed' in app.transcript.get('1.0','end')
+    assert app.transcript.get('1.0','end') == previous, 'Screen changes must never append canned event-log dialogue'
     app.house.options['screen_comments'] = False
     # Games still run after the local chat allowance is spent, and record separate usage.
     app.house.agents['Burt']['used'] = app.house.agents['Burt']['limit']

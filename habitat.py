@@ -115,6 +115,9 @@ class Habitat:
         menu = tk.Menu(app.root, tearoff=False)
         menu.add_command(label="Close the front wall" if self.open else "Enter the house", command=lambda: setattr(self, "open", not self.open))
         menu.add_command(label="Have a chat", command=app.show_chat)
+        menu.add_command(label='Chaos: play with all app windows',command=app.enable_chaos)
+        menu.add_command(label='Pause window play',command=app.pause_window_play)
+        menu.add_command(label='Undo last window move',command=app.windows.undo)
         menu.add_checkbutton(label="Movie mode", variable=app.movie_mode, command=app.set_movie_mode)
         corners = tk.Menu(menu, tearoff=False)
         for value in ("bottom-left", "bottom-right", "top-left", "top-right"):

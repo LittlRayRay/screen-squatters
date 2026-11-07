@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from ai import DEFAULT_MODEL, companion_turn
-from attention import Attention, screen_remark, EVENTS
+from attention import Attention, EVENTS
 from behaviour import World
 from game_social import occasional_refusal
 from house import House, CHARACTERS
@@ -18,29 +18,38 @@ from window_world import WindowWorld, clean_options, clean_rule
 
 
 class AttentionTests(unittest.TestCase):
-    def test_every_event_is_covered_and_duplicate_delivery_is_not_repeated(self):
+    def test_duplicate_delivery_is_not_repeated(self):
         attention = Attention()
         for kind in EVENTS:
             self.assertTrue(attention.add({'event':kind,'event_id':kind,'source':'browser'}))
             self.assertFalse(attention.add({'event':kind,'event_id':kind,'source':'browser'}))
-        heard = []
-        while attention.pending:
-            events = attention.take()
-            for name in CHARACTERS:
-                self.assertTrue(screen_remark(name,events,random.Random(2)))
-            heard.extend(item['event'] for item in events)
-        self.assertEqual(set(heard),EVENTS)
+        self.assertEqual(len(attention.pending),len(EVENTS))
 
-    def test_large_bursts_preserve_counts_without_unbounded_title_storage(self):
+    def test_bursts_have_no_backlog_and_reactions_are_rare(self):
         attention = Attention()
         for i in range(1000):
-            attention.add({'event':'tab-opened','event_id':str(i),'source':'browser'})
-        self.assertLessEqual(len(attention.pending),256)
+            attention.add({'event':'tab-switched','event_id':str(i),'source':'browser'},now=100)
+        self.assertLessEqual(len(attention.pending),32)
+        rng = random.Random(1)
+        self.assertIsNotNone(attention.occasional(101,rng))
+        self.assertFalse(attention.pending)
+        attention.add({'event':'tab-opened'},now=102)
+        self.assertIsNone(attention.occasional(103,rng))
+        self.assertFalse(attention.pending)
         count = 0
-        while attention.pending:
-            for item in attention.take():
-                count += sum(item.get('counts',{'tab-opened':1}).values())
-        self.assertEqual(count,1000)
+        for n in range(1,101):
+            now = 200+n*100
+            attention.add({'event':'tab-switched'},now=now)
+            count += attention.occasional(now,rng) is not None
+        self.assertTrue(10<count<40)
+
+    def test_transient_windows_and_stale_changes_are_silent(self):
+        attention = Attention()
+        attention.add({'event':'window-opened','window':'w1'},now=100)
+        attention.add({'event':'window-closed','window':'w1'},now=101)
+        self.assertIsNone(attention.occasional(102,random.Random(1)))
+        attention.add({'event':'tab-opened'},now=110)
+        self.assertIsNone(attention.occasional(500,random.Random(1)))
 
     def test_pause_and_permission_revocation_remove_pending_private_reactions(self):
         attention = Attention()

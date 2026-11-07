@@ -26,20 +26,26 @@ def windows_panel(app,parent):
     cooldown = tk.StringVar(value=str(options['window_cooldown']))
     rate = tk.StringVar(value=str(options['window_actions_per_minute']))
     playfulness = tk.StringVar(value=str(options['playfulness']))
+    all_windows = tk.BooleanVar(value=options['window_scope']=='all')
+    activities = tk.BooleanVar(value=options['play_during_activities'])
     check(parent,'Share native window metadata with the housemates',enabled)
-    check(parent,'Allow window play on explicitly permitted windows/apps',control)
+    check(parent,'Enable window play',control)
+    check(parent,'Allow ALL ordinary app windows (move, resize, restore/maximize)',all_windows)
+    check(parent,'Keep window play active during games and movie mode',activities)
     tk.Label(parent,text='Titles, app names and geometry only; no screenshots or window contents.\nSelected metadata may go to Gemini during normal conversation turns.',
              bg=BG,fg=MUTED,justify='left',wraplength=590).pack(anchor='w',pady=4)
     spin(parent,'Wait for user idle (seconds)',idle,0,120)
     spin(parent,'Minimum cooldown per window (seconds)',cooldown,5,600)
     spin(parent,'Maximum actions per minute, across all agents',rate,1,30)
-    spin(parent,'Window play: 0 off · 1 relaxed · 2 playful · 3 eager',playfulness,0,3)
+    spin(parent,'Window play: 0 off · 1 relaxed · 2 playful · 3 eager · 4 CHAOS',playfulness,0,4)
     def save_global():
         try:
             values = dict(options,window_awareness=enabled.get(),window_control=control.get(),
                           window_idle_seconds=float(idle.get()),window_cooldown=float(cooldown.get()),
                           window_actions_per_minute=int(rate.get()))
             values['playfulness'] = int(playfulness.get())
+            values['window_scope'] = 'all' if all_windows.get() else 'selected'
+            values['play_during_activities'] = activities.get()
         except ValueError:
             app.note('Enter numeric window limits.')
             return
@@ -49,6 +55,16 @@ def windows_panel(app,parent):
         rate.set(str(options['window_actions_per_minute']))
         refresh()
     app.button(parent,'Save window controls',save_global,True).pack(anchor='w',pady=5)
+    def chaos():
+        app.enable_chaos()
+        control.set(True); enabled.set(True); all_windows.set(True); activities.set(True)
+        idle.set('0'); cooldown.set('5'); rate.set('12'); playfulness.set('4')
+        refresh()
+    master = tk.Frame(parent,bg=BG)
+    master.pack(fill='x',pady=4)
+    app.button(master,'CHAOS: all app windows',chaos,True).pack(side='left',padx=(0,5))
+    app.button(master,'Pause',lambda:pause()).pack(side='left',padx=5)
+    app.button(master,'Undo',app.windows.undo).pack(side='left',padx=5)
     listing = ttk.Treeview(parent,columns=('app','title','policy'),show='headings',height=5,selectmode='browse')
     for column,width in [('app',110),('title',300),('policy',120)]:
         listing.heading(column,text=column.title())
@@ -104,8 +120,7 @@ def windows_panel(app,parent):
     app.button(buttons,'Undo last move',lambda:status.set('Undo requested.' if app.windows.undo() else 'Nothing eligible to undo.')).pack(side='left',padx=5)
     def pause():
         control.set(False)
-        options['window_control'] = False
-        app.save()
+        app.pause_window_play()
         status.set('All window play paused.')
     app.button(buttons,'Pause all window play',pause).pack(side='left')
     tk.Label(parent,textvariable=status,bg=BG,fg=MUTED,wraplength=590,justify='left').pack(anchor='w')
@@ -114,7 +129,7 @@ def windows_panel(app,parent):
     def refresh():
         if not listing.winfo_exists():
             return
-        activity.set('Recent window play:\n'+'\n'.join(list(app.windows.audit)[-3:]) if app.windows.audit else 'No window play this session.')
+        activity.set(app.windows.status+'\n'+('\n'.join(list(app.windows.audit)[-2:]) if app.windows.audit else 'Closing windows is never allowed.'))
         keys = set(app.windows.windows)
         for key in listing.get_children():
             if key not in keys:
@@ -146,7 +161,7 @@ def social_panel(app,parent):
     spin(parent,'Bounce (0 = soft, 0.9 = springy)',bounce,0,.9,.05)
     check(parent,'Allow playful cartoon scuffles when annoyed',scuffles)
     spin(parent,'Minimum time between scuffles (seconds)',cooldown,20,600,10)
-    check(parent,'Comment on every permitted tab/app open, close or switch',comments)
+    check(parent,'Occasionally comment on interesting screen/task changes',comments)
     check(parent,'Let housemates occasionally invite me to their games',invites)
     check(parent,'Let them start playing after an unanswered 25-second invite',autoplay)
     check(parent,'Occasional deliberation: friends may choose to sit out',deliberate)

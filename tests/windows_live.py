@@ -8,7 +8,7 @@ import sys
 import time
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from window_world import NativeWindows, WindowWorld, clean_options, clean_rule
+from window_world import NativeWindows, WindowWorld, clean_options, clean_rule, chaos_options
 
 CHILD = '''
 import ctypes,json,tkinter as tk,threading,sys
@@ -34,6 +34,16 @@ def wait_rect(backend,hwnd,predicate):
             return record
         time.sleep(.04)
     raise AssertionError('Fixture window did not reach its expected position')
+
+
+def wait_state(backend,hwnd,state):
+    deadline = time.monotonic()+3
+    while time.monotonic()<deadline:
+        current = backend.inspect(hwnd)
+        if current and current['state']==state:
+            return current
+        time.sleep(.04)
+    raise AssertionError('Fixture did not reach its expected window state')
 
 
 def main():
@@ -72,6 +82,29 @@ def main():
         assert moved['rect'][1:] == [original[1],original[2]+24,original[3]]
         assert world.undo()
         wait_rect(backend,info['hwnd'],lambda rect:rect == original)
+        # All-window chaos must handle real maximized apps and visibly animate geometry.
+        assert backend.set_state(record,'maximize')
+        maximized = wait_state(backend,info['hwnd'],'maximized')
+        chaos = WindowWorld(chaos_options({}),backend)
+        chaos.update([maximized])
+        chaos_key = next(iter(chaos.windows))
+        assert not chaos.apply({'target':chaos_key,'kind':'close'},100)
+        assert chaos.apply({'target':chaos_key,'dx':100},100)
+        restored = wait_state(backend,info['hwnd'],'normal')
+        start = time.monotonic()
+        assert chaos.apply({'target':chaos_key,'dx':140,'dy':70,'dw':80},start,animated=True,shake=True)
+        target = list(chaos.animations[0]['target'])
+        while chaos.animations:
+            chaos.animate()
+            time.sleep(.025)
+        wait_rect(backend,info['hwnd'],lambda rect:rect == target)
+        assert target != restored['rect']
+        assert chaos.undo()
+        wait_rect(backend,info['hwnd'],lambda rect:rect == restored['rect'])
+        assert chaos.undo()
+        wait_state(backend,info['hwnd'],'maximized')
+        backend.set_state(record,'restore')
+        wait_state(backend,info['hwnd'],'normal')
         world.overrides[key] = clean_rule({'control':'resize','size':32,'cooldown':5})
         assert world.apply({'target':key,'dw':999,'dh':999},106)
         wait_rect(backend,info['hwnd'],lambda rect:rect == [original[0],original[1],original[2]+32,original[3]+32])
@@ -79,7 +112,7 @@ def main():
         wait_rect(backend,info['hwnd'],lambda rect:rect == original)
         process.communicate(input='close\n',timeout=5)
         assert any(kind=='closed' and item['pid']==process.pid for kind,item,_stamp in pump_events()), 'Hook must report the fixture closing'
-        print('Native window test passed: open/close hooks, own child metadata, default denial, bounded nudge, resize and undo; no screenshots or other app movement.')
+        print('Native window test passed: hooks, nudge, resize, all-window chaos, maximized restore, animated shake, undo/state recovery and closing rejection; only the disposable fixture was moved.')
     finally:
         if process.poll() is None:
             process.terminate()

@@ -3,8 +3,10 @@ from bisect import bisect_right
 import re
 
 
-def conversational_speech(text):
+def conversational_speech(text,suppress_events=False):
     """A filler-only response is silence, rather than a spoken thinking placeholder."""
+    if suppress_events and re.search(r'\b\d+\s+(?:windows?|tabs?)\s+(?:open(?:ed)?|clos(?:ed|e)|switch(?:es)?)\b',text,re.I):
+        return ''
     return '' if re.fullmatch(r'[\s.,!?…]*(?:(?:h+m+|um+|uh+|ah+|erm+)[\s.,!?…]*)+', text, re.I) else text
 
 
