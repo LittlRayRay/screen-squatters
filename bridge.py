@@ -20,9 +20,14 @@ def validate_page(value):
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("Only HTTP and HTTPS pages are supported")
     # Query strings and fragments often contain private identifiers.
-    url = f"{parts.scheme}://{parts.netloc}{parts.path}"
+    host = parts.hostname
+    if ":" in host:
+        host = "[" + host + "]"
+    if parts.port:
+        host += ":" + str(parts.port)
+    url = f"{parts.scheme}://{host}{parts.path}"
     return {"title": value["title"][:300], "url": url[:2048],
-            "text": value["text"][:MAX_TEXT]}
+            "text": value["text"][:MAX_TEXT], "automatic": value.get("automatic") is True}
 
 
 class BridgeServer(ThreadingHTTPServer):
@@ -32,6 +37,7 @@ class BridgeServer(ThreadingHTTPServer):
     def __init__(self, token, inbox, port=PORT):
         self.token = token
         self.inbox = inbox
+        self.awake = False
         super().__init__(("127.0.0.1", port), BridgeHandler)
 
 
@@ -65,7 +71,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self.authorized():
-            self.reply(403, {"error": "Pairing code rejected. Copy it again from Pip."})
+            self.reply(403, {"error": "Pairing code rejected. Copy it again from Home Settings."})
             return
         if self.path != "/page":
             self.reply(404, {"error": "Unknown endpoint"})
@@ -81,9 +87,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
             page = validate_page(json.loads(self.rfile.read(length)))
             self.server.inbox.put_nowait(page)
         except queue.Full:
-            self.reply(429, {"error": "Pip is busy. Try again shortly."})
+            self.reply(429, {"error": "The house is busy. Try again shortly."})
             return
         except (ValueError, UnicodeDecodeError):
             self.reply(400, {"error": "Invalid page data"})
             return
         self.reply(200, {"ok": True, "characters": len(page["text"])})
+
+    def do_GET(self):
+        if not self.authorized():
+            self.reply(403, {"error": "Pairing code rejected"})
+        elif self.path == "/status":
+            self.reply(200, {"awake": self.server.awake})
+        else:
+            self.reply(404, {"error": "Unknown endpoint"})

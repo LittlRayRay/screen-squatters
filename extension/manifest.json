@@ -1,9 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Pip · share a page",
-  "version": "0.1.0",
-  "description": "Share the current page's readable text with your local Pip desktop companion.",
+  "name": "Screen Squatters · browser companion",
+  "version": "0.2.0",
+  "description": "Share visible browser text with Pip, Byte and Rex on your desktop.",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["http://127.0.0.1/*"],
-  "action": {"default_popup": "popup.html", "default_title": "Share this page with Pip"}
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_popup": "popup.html", "default_title": "Share with your housemates"}
 }

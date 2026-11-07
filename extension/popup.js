@@ -2,40 +2,25 @@
 const code = document.querySelector("#code");
 const share = document.querySelector("#share");
 const status = document.querySelector("#status");
+const follow = document.querySelector("#follow");
+let following = false;
 
-// Runs in the page's isolated extension world. No page-supplied code is evaluated.
-function readPage() {
-  const root = document.querySelector("main, [role='main'], article") || document.body;
-  if (!root) throw new Error("This page has no readable document.");
-  const chunks = [];
-  let size = 0;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement;
-      if (!parent || !node.textContent.trim()) return NodeFilter.FILTER_REJECT;
-      if (parent.closest("script,style,noscript,template,input,textarea,select,option,[contenteditable]:not([contenteditable='false']),[hidden],[aria-hidden='true']")) return NodeFilter.FILTER_REJECT;
-      if (typeof parent.checkVisibility === "function" && !parent.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) return NodeFilter.FILTER_REJECT;
-      if (getComputedStyle(parent).visibility === "hidden" || !parent.getClientRects().length) return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    }
-  });
-  while (walker.nextNode() && size < 24000) {
-    const chunk = walker.currentNode.textContent.replace(/\s+/g, " ").trim();
-    chunks.push(chunk);
-    size += chunk.length + 1;
+function tokenValue() {
+  const token = code.value.trim();
+  if (!/^[a-f0-9]{48}$/.test(token)) {
+    status.textContent = "Copy the pairing code from the desktop home's Settings and paste it above.";
+    code.focus();
+    return null;
   }
-  const url = new URL(location.href);
-  url.search = "";
-  url.hash = "";
-  url.username = "";
-  url.password = "";
-  return {title: document.title.slice(0, 300), url: url.href, text: chunks.join("\n").slice(0, 24000)};
+  return token;
 }
 
 async function init() {
   try {
-    const saved = await chrome.storage.local.get("pairingCode");
+    const saved = await chrome.storage.local.get(["pairingCode", "following"]);
     code.value = saved.pairingCode || "";
+    following = !!saved.following;
+    follow.textContent = following ? "Stop following" : "Start following focused pages";
     if (chrome.storage.local.setAccessLevel) {
       await chrome.storage.local.setAccessLevel({accessLevel: "TRUSTED_CONTEXTS"});
     }
@@ -45,14 +30,10 @@ async function init() {
 }
 
 share.addEventListener("click", async () => {
-  const token = code.value.trim();
-  if (!/^[a-f0-9]{48}$/.test(token)) {
-    status.textContent = "Copy the pairing code from Pip's Settings and paste it above.";
-    code.focus();
-    return;
-  }
+  const token = tokenValue();
+  if (!token) return;
   share.disabled = true;
-  status.textContent = "Reading this page…";
+  status.textContent = "Reading visible page text…";
   try {
     await chrome.storage.local.set({pairingCode: token});
     const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
@@ -70,21 +51,55 @@ share.addEventListener("click", async () => {
     let response;
     try {
       response = await fetch("http://127.0.0.1:17373/page", {
-        method: "POST",
-        headers: {"Content-Type": "application/json", "Authorization": `Bearer ${token}`},
-        body: JSON.stringify(page),
-        signal: AbortSignal.timeout(5000)
+        method: "POST", headers: {"Content-Type": "application/json", "Authorization": `Bearer ${token}`},
+        body: JSON.stringify({...page, automatic: false}), signal: AbortSignal.timeout(5000)
       });
     } catch {
-      throw new Error("Can't reach Pip. Launch the desktop app, then try again. Allow local network access if your browser asks.");
+      throw new Error("Can't reach the house. Launch Screen Squatters and try again. Allow local network access if your browser asks.");
     }
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Pip couldn't receive this page.");
-    status.textContent = result.characters ? `Shared ${result.characters.toLocaleString()} characters. Ask Pip about it on your desktop!` : "Shared, but no readable text was found. Try a text-based page.";
+    if (!response.ok) throw new Error(result.error || "Couldn't share this page.");
+    status.textContent = result.characters ? `Shared ${result.characters.toLocaleString()} characters with the house!` : "Shared, but no visible text was found. Try a text-based page.";
   } catch (error) {
     status.textContent = error.message || "Something went wrong. Try again.";
   } finally {
     share.disabled = false;
+  }
+});
+
+follow.addEventListener("click", async () => {
+  const token = tokenValue();
+  if (!token) return;
+  follow.disabled = true;
+  try {
+    if (following) {
+      await chrome.storage.local.set({following: false});
+      await chrome.scripting.unregisterContentScripts({ids: ["squatters-follow"]}).catch(() => {});
+      following = false;
+      status.textContent = "Following stopped. Previously shared snapshots remain until cleared in the home app.";
+    } else {
+      const granted = await chrome.permissions.request({origins: ["http://*/*", "https://*/*"]});
+      if (!granted) throw new Error("Website access wasn't granted. Share this page still works without following.");
+      await chrome.storage.local.set({pairingCode: token});
+      await chrome.scripting.unregisterContentScripts({ids: ["squatters-follow"]}).catch(() => {});
+      await chrome.scripting.registerContentScripts([{
+        id: "squatters-follow", matches: ["http://*/*", "https://*/*"],
+        js: ["reader.js", "watch.js"], runAt: "document_idle", allFrames: false,
+        persistAcrossSessions: true
+      }]);
+      await chrome.storage.local.set({following: true});
+      following = true;
+      const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+      if (tab?.id && /^https?:\/\//.test(tab.url || "")) {
+        await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["reader.js", "watch.js"]}).catch(() => {});
+      }
+      status.textContent = "Following focused pages while housemates are awake. Other existing tabs may need a reload. AI hangout turns can send this text to OpenAI.";
+    }
+  } catch (error) {
+    status.textContent = error.message || "Couldn't change following. Try again.";
+  } finally {
+    follow.textContent = following ? "Stop following" : "Start following focused pages";
+    follow.disabled = false;
   }
 });
 init();
