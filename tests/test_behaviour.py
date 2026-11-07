@@ -10,7 +10,7 @@ from bridge import validate_page
 
 class WorldTests(unittest.TestCase):
     def setUp(self):
-        self.world = World(["Pip", "Byte", "Rex"], (0, 0, 1600, 900), (1200, 600), rng=random.Random(4))
+        self.world = World(["Burt", "Byte", "Rex"], (0, 0, 1600, 900), (1200, 600), rng=random.Random(4))
 
     def advance(self, seconds=50):
         arrived = []
@@ -19,19 +19,19 @@ class WorldTests(unittest.TestCase):
         return arrived
 
     def test_wake_leaves_house_and_moves_inside_screen(self):
-        self.world.wake("Pip", 0)
-        start = self.world.residents["Pip"].x, self.world.residents["Pip"].y
+        self.world.wake("Burt", 0)
+        start = self.world.residents["Burt"].x, self.world.residents["Burt"].y
         self.advance(2)
-        resident = self.world.residents["Pip"]
+        resident = self.world.residents["Burt"]
         self.assertNotEqual(start, (resident.x, resident.y))
         self.assertTrue(0 <= resident.x <= 1410 and 0 <= resident.y <= 670)
 
     def test_return_home_eventually_hides_the_character(self):
-        self.world.wake("Pip", 0)
+        self.world.wake("Burt", 0)
         self.advance(2)
-        self.world.rest("Pip", 2)
+        self.world.rest("Burt", 2)
         self.advance(30)
-        resident = self.world.residents["Pip"]
+        resident = self.world.residents["Burt"]
         self.assertEqual(resident.mode, "home")
         self.assertEqual((resident.x, resident.y), self.world.home)
 
@@ -39,14 +39,14 @@ class WorldTests(unittest.TestCase):
         for resident in self.world.residents.values():
             resident.wake_at = 5
         self.world.residents["Rex"].blocked = True
-        self.assertEqual(self.world.due(6, [], ["Pip", "Rex"]), [("wake", "Pip")])
-        self.world.wake("Pip", 6)
-        self.world.residents["Pip"].rest_at = 7
-        self.assertIn(("sleep", "Pip"), self.world.due(8, ["Pip"], ["Pip"]))
-        self.assertEqual(self.world.due(8, ["Pip"], [], busy=["Pip"]), [])
-        self.assertEqual(self.world.due(8, ["Pip"], ["Pip"], playing=True), [])
+        self.assertEqual(self.world.due(6, [], ["Burt", "Rex"]), [("wake", "Burt")])
+        self.world.wake("Burt", 6)
+        self.world.residents["Burt"].rest_at = 7
+        self.assertIn(("sleep", "Burt"), self.world.due(8, ["Burt"], ["Burt"]))
+        self.assertEqual(self.world.due(8, ["Burt"], [], busy=["Burt"]), [])
+        self.assertEqual(self.world.due(8, ["Burt"], ["Burt"], playing=True), [])
         self.world.paused = True
-        self.assertEqual(self.world.due(1000, [], ["Pip", "Byte"]), [])
+        self.assertEqual(self.world.due(1000, [], ["Burt", "Byte"]), [])
 
     def test_interest_approaches_beside_target_then_points(self):
         self.world.wake("Byte", 0)
@@ -61,19 +61,19 @@ class WorldTests(unittest.TestCase):
         self.assertEqual(resident.pending_speech, "That picture!")
 
     def test_autonomy_off_holds_position_but_allows_return_home(self):
-        self.world.wake("Pip", 0)
-        resident = self.world.residents["Pip"]
+        self.world.wake("Burt", 0)
+        resident = self.world.residents["Burt"]
         before = resident.x, resident.y
         self.world.step(.1, 1, autonomous=False)
         self.assertEqual(before, (resident.x, resident.y))
         resident.x = 10
-        self.world.rest("Pip", 2)
+        self.world.rest("Burt", 2)
         self.world.step(.1, 3, autonomous=False)
         self.assertGreater(resident.x, 10)
 
     def test_manual_drag_hold_prevents_fighting_the_user(self):
-        self.world.wake("Pip", 0)
-        resident = self.world.residents["Pip"]
+        self.world.wake("Burt", 0)
+        resident = self.world.residents["Burt"]
         resident.held_until = 30
         before = resident.x, resident.y
         self.world.step(.1, 5)

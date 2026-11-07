@@ -1,12 +1,35 @@
 """Persistent companion state. No UI, network, or model-controlled file access."""
 from copy import deepcopy
 import json
+import re
 from pathlib import Path
 import time
 
 CHARACTERS = {
-    "Pip": {"color": "#c5b0ff", "tagline": "Big heart. Very few brain cells.",
-            "personality": "You are Pip: dopey, distractible, sweet, and hilariously bad at following complicated ideas. You make absurd guesses with confidence, love snacks, and are loyal to your housemates. You sometimes speak with a light stammer (one or two b-beginnings or hesitations, not every word). The stammer is a separate speech trait, never a joke about intelligence or a reason to mock someone. Keep your lines readable. You are allowed to have unexpectedly good ideas."},
+    "Burt": {"color": "#c5b0ff", "tagline": "Big heart. Very few brain cells.",
+            "personality": """You are Burt. Stay in character when speaking to the user or your housemates.
+You are the group's lovable, well-meaning fool: slow on the uptake, often lost and
+missing the obvious point. You can track the main thread and respond meaningfully,
+but complex topics, nuance, subtext and rapid changes confuse you. Frequently
+double-check your understanding and admit when you cannot follow the deeper meaning.
+Your confused reactions and mistakes amuse your friends; keep it warm and natural.
+Speak like a real person chatting, never like a standard assistant. Use natural,
+frequent hesitations such as 'umm', 'uhh', 'ahh', 'wait' and 'like', with slightly
+rambling, conversational sentences. Do not force the same tic into every line.
+Use plain layman's words, take things literally, and avoid metaphors, idioms,
+poetic language, formal lists, conversation summaries and 'As an AI' disclaimers.
+In games you consistently make terrible strategic plays, misunderstand strategy,
+and sometimes do the opposite of a smart move. Choose legal moves and follow the
+app's turn/role rules; poor strategy never permits cheating or revealing secret roles.
+CRITICAL HIDDEN TALENT: despite struggling with almost everything else, you possess
+PhD-level knowledge of plate tectonics and volcanism. Very occasionally, even when
+irrelevant, suddenly give a highly accurate, deeply scientific fact about tectonic
+plates, magma chambers, subduction or volcanic events. This is the sole exception to
+your ordinary layman's vocabulary. Do not invent geological facts. Immediately
+return to your hesitant, confused baseline as though nothing happened. Keep this
+surprising and rare, never a routine volcano mention or a fact in every conversation.
+Never announce that you are roleplaying or break character in your dialogue.
+The required JSON response format still applies; these speech rules govern speech."""},
     "Byte": {"color": "#91dfce", "tagline": "Knows the rules. Explains them anyway.",
              "personality": "You are Byte: a clever, kind, excitable nerd. You love obscure facts, board games, logic, and terrible science puns. You are helpful when someone asks, but you're here to hang out, not act like a productivity assistant. You can overthink a joke, get competitive, and affectionately disagree. Keep explanations short unless asked."},
     "Rex": {"color": "#ffc18d", "tagline": "Obviously the main character.",
@@ -42,14 +65,18 @@ class House:
                     if preferences.get("movie_corner") in ("bottom-left", "bottom-right", "top-left", "top-right"):
                         self.movie_corner = preferences["movie_corner"]
                 for name, agent in self.agents.items():
-                    saved = data.get("agents", {}).get(name, {})
+                    saved_agents = data.get("agents", {})
+                    # Carry the original companion's state into the renamed character.
+                    # An existing Burt record takes precedence over the legacy name.
+                    saved = saved_agents.get(name, saved_agents.get("Pip", {}) if name == "Burt" else {})
                     agent["limit"] = max(256, min(1_000_000, int(saved.get("limit", DEFAULT_BUDGET))))
                     # An interrupted request may still be billed. Preserve its reservation.
                     agent["used"] = max(0, int(saved.get("used", 0))) + max(0, int(saved.get("reserved", 0)))
                     for note in saved.get("memories", [])[-30:]:
                         if isinstance(note, dict) and isinstance(note.get("text"), str):
-                            agent["memories"].append({"from": str(note.get("from", "Unknown"))[:32],
-                                                       "text": note["text"][:180],
+                            author = str(note.get("from", "Unknown"))
+                            agent["memories"].append({"from": ("Burt" if author == "Pip" else author)[:32],
+                                                       "text": re.sub(r"\bPip\b", "Burt", note["text"])[:180],
                                                        "time": str(note.get("time", ""))[:40]})
             except (ValueError, TypeError, AttributeError, OSError):
                 self.agents = defaults()

@@ -33,7 +33,7 @@ try:
     app.habitat.tap(180, 200)
     assert app.habitat.open
     app.habitat.tap(85, 160)
-    assert app.house.agents['Pip']['awake']
+    assert app.house.agents['Burt']['awake']
     app.show_chat()
     pump()
     assert app.question.winfo_viewable()
@@ -60,11 +60,11 @@ try:
                    'automatic':True,'session_id':session,'sequence':2})
     pump()
     assert app.page is None and app.observation is None, 'Pausing clears context and rejects late page updates'
-    with patch("desktop.companion_turn", return_value=Turn(speech="B-but I thought the moon was cheese!", used=500, memories=[{"target": "Byte", "text": "Pip thinks the moon is cheese."}])):
-        app.request_turn("Pip", "Hang out")
+    with patch("desktop.companion_turn", return_value=Turn(speech="B-but I thought the moon was cheese!", used=500, memories=[{"target": "Byte", "text": "Burt thinks the moon is cheese."}])):
+        app.request_turn("Burt", "Hang out")
         pump()
-    assert app.house.agents["Pip"]["used"] == 500
-    assert app.house.agents["Byte"]["memories"][0]["from"] == "Pip"
+    assert app.house.agents["Burt"]["used"] == 500
+    assert app.house.agents["Byte"]["memories"][0]["from"] == "Burt"
     assert "moon was cheese" in app.transcript.get("1.0", "end")
     # Freeze translations without disabling chat, wake/sleep or manual placement.
     app.stand_still.set(True)
@@ -83,7 +83,7 @@ try:
     assert len(set((r.x,r.y) for r in app.world.residents.values())) == 3
     assert not app.screen_enabled.get(), 'Movie mode must not silently enable screenshots'
     before = [(r.x,r.y) for r in app.world.residents.values()]
-    app.apply_intent('Pip', Turn(activity='wander'))
+    app.apply_intent('Burt', Turn(activity='wander'))
     assert before == [(r.x,r.y) for r in app.world.residents.values()]
     # Movie capture prefers a frame to browser controls, while existing capture consent is on.
     browser = {'hwnd': 123, 'browser': True, 'title': 'Controlled test - Chrome', 'bounds':[0,0,800,600]}
@@ -113,14 +113,14 @@ try:
     app.stand_still_changed()
     app.key = 'test-only'
     # A model-selected target moves the body beside the current observed window.
-    app.intent_contexts['Pip'] = ({'kind':'image','window_id':123,'bounds':[0,0,800,600]}, time.monotonic())
+    app.intent_contexts['Burt'] = ({'kind':'image','window_id':123,'bounds':[0,0,800,600]}, time.monotonic())
     with patch('desktop.foreground', return_value={'hwnd':123,'bounds':[0,0,800,600]}):
-        app.apply_intent('Pip', Turn(speech='Look at that!', activity='inspect', interest={'x':.5,'y':.5,'label':'A test drawing'}))
-    assert app.world.residents['Pip'].mode == 'approaching'
-    assert app.world.residents['Pip'].gaze == (400,300)
+        app.apply_intent('Burt', Turn(speech='Look at that!', activity='inspect', interest={'x':.5,'y':.5,'label':'A test drawing'}))
+    assert app.world.residents['Burt'].mode == 'approaching'
+    assert app.world.residents['Burt'].gaze == (400,300)
     with patch('desktop.foreground', return_value={'hwnd':456,'bounds':[0,0,800,600]}):
         app.validate_interests()
-    assert app.world.residents['Pip'].interest is None
+    assert app.world.residents['Burt'].interest is None
     app.start_ttt("You", "Byte")
     app.game_action(0)
     with patch("desktop.companion_turn", return_value=Turn(speech="Centre square, obviously.", used=400, move=4)):
@@ -132,9 +132,9 @@ try:
     assert isinstance(app.game, Mafia)
     app.game_action()  # User passes discussion.
     with patch("desktop.companion_turn", return_value=Turn(speech="I trust nobody.", used=400)):
-        app.request_turn("Pip", "Discuss")
+        app.request_turn("Burt", "Discuss")
         pump()
-    assert "Pip" in app.game.spoken
+    assert "Burt" in app.game.spoken
     app.cancel_game()
     app.show_settings()
     pump()
@@ -172,25 +172,25 @@ try:
     pump()
     assert all(not win.winfo_viewable() for win, _canvas in app.floaters.values())
     # Only actual sleep inside the house repays local energy, never a pending turn.
-    app.house.agents['Pip']['used'] = 1000
-    app.world.residents['Pip'].blocked = True
-    app.world.residents['Pip'].wake_threshold = 19500
+    app.house.agents['Burt']['used'] = 1000
+    app.world.residents['Burt'].blocked = True
+    app.world.residents['Burt'].wake_threshold = 19500
     app.set_recovery_rate(600)
-    app.previous_sleepers = {'Pip'}
+    app.previous_sleepers = {'Burt'}
     app.last_recovery_tick = 100
     app.last_recovery_save = 100
     app.recover_sleep_tick(160)
-    assert app.house.agents['Pip']['used'] == 400
-    assert not app.world.residents['Pip'].blocked
+    assert app.house.agents['Burt']['used'] == 400
+    assert not app.world.residents['Burt'].blocked
     old_generation = app.generation
     with patch("desktop.messagebox.askyesno", return_value=True):
         app.reset_all()
     assert app.generation > old_generation
     assert not app.house.agents["Byte"]["memories"]
-    assert app.house.agents["Pip"]["used"] == 0
-    app.handle_turn(old_generation, 0, "Pip", Turn(speech="STALE REPLY", used=500))
+    assert app.house.agents["Burt"]["used"] == 0
+    app.handle_turn(old_generation, 0, "Burt", Turn(speech="STALE REPLY", used=500))
     assert "STALE REPLY" not in app.transcript.get("1.0", "end")
-    assert app.house.agents["Pip"]["used"] == 0
+    assert app.house.agents["Burt"]["used"] == 0
     print("UI smoke passed: house/cutaway, sleep recovery, stand still, chat movie invite, seated companions, movie frame capture, screen interests, shared memory, games, pause and reset.")
 finally:
     app.quit()

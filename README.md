@@ -4,13 +4,13 @@ A little Windows desktop home for three AI housemates. They're here to hang out,
 
 | Housemate | Personality |
 | --- | --- |
-| **Pip** | Dopey, distractible and sweet, with absurd ideas and a light stammer. |
+| **Burt** | Lovable, literal and often confused. Hesitates naturally, makes terrible strategic plays, and very occasionally reveals PhD-level knowledge of tectonics and volcanoes. |
 | **Byte** | A smart, kind, excitable nerd who loves games, facts and terrible puns. Helpful when asked. |
 | **Rex** | Arrogant, theatrical and mildly rude. Affectionate snark, competitive energy and a tiny crown. |
 
 ## Start the house
 
-Windows with Python 3.10+ and Tkinter is required (Python 3.11 is already installed on this laptop). Double-click **launch.cmd**, or run `python desktop.py` in this folder. If an older Pip instance is running, right-click its character and quit it first: both versions use port 17373.
+Windows with Python 3.10+ and Tkinter is required (Python 3.11 is already installed on this laptop). Double-click **launch.cmd**, or run `python desktop.py` in this folder. If an older Screen Squatters instance is running, right-click its character and quit it first: both versions use port 17373.
 
 Only a small, borderless house appears on your desktop at launch. Click it: the front wall fades away to reveal three bedrooms and a little living room. Tap a character in their room to wake them; they walk out onto the desktop. Tap a room again to send that housemate home. Click the roof to put the front wall back. Drag the house to move it.
 
@@ -75,7 +75,7 @@ Memories, allowances and usage are saved in `.local/house.json`, which is exclud
 
 **Tic-tac-toe:** wake a housemate, right-click the house, choose **Play a game → Tic-tac-toe** and pick an opponent. With two or more awake, you can also watch the first two play each other. Click squares on your turn. The local engine validates turn order, occupied squares, wins and draws; a model's invalid move falls back to the first open square.
 
-**Mafia:** wake all three. The four players are you, Pip, Byte and Rex, with one randomly assigned mafia member and three townsfolk. Everyone gets a discussion turn and a vote; ties eliminate nobody. At night the mafia secretly chooses one player to eliminate. The town wins by voting out the mafia; the mafia wins at parity. Eliminated players spectate. Your own role appears in the game window; each model receives only its own role. Night speech isn't published, and per-character token counters are hidden during Mafia to avoid revealing the actor. There are no doctor/detective roles in this four-player version.
+**Mafia:** wake all three. The four players are you, Burt, Byte and Rex, with one randomly assigned mafia member and three townsfolk. Everyone gets a discussion turn and a vote; ties eliminate nobody. At night the mafia secretly chooses one player to eliminate. The town wins by voting out the mafia; the mafia wins at parity. Eliminated players spectate. Your own role appears in the game window; each model receives only its own role. Night speech isn't published, and per-character token counters are hidden during Mafia to avoid revealing the actor. There are no doctor/detective roles in this four-player version.
 
 Speak in the living room or click pass during your discussion turn. Vote/choose a night target in the game window. Game inference uses each character's own allowance. Sending a player home or exhausting their budget ends the current game. An API error ends the game and pauses automatic hangout rather than retrying paid requests repeatedly.
 
@@ -127,7 +127,7 @@ Turn capture off before viewing private material. **Settings → Screen awarenes
 
 The authenticated HTTP bridge listens only on `127.0.0.1:17373`. Its random token is stored in `.local/pairing-code.txt` (Git-ignored). Requests validate the host, Firefox/Chrome extension origin, token, body size and page fields. `/status` reports whether anyone is awake; `/page` accepts snapshots; `/browser-state` clears outdated context. This prototype doesn't require a native-messaging installer or registry changes.
 
-- **Port busy:** quit the older Pip or another Screen Squatters instance first.
+- **Port busy:** quit the other Screen Squatters instance first.
 - **Can't reach the house:** launch the desktop app. If your browser requests local network access, allow it for this extension.
 - **Pairing rejected:** copy the code again from Connection settings. Deleting `.local` regenerates it on next launch.
 - **HTTP 402 / prepaid credits depleted:** the key may be valid and `countTokens` may work while generation is blocked by billing. Open [Google AI Studio Projects](https://ai.studio/projects), check the API project's billing and add prepaid credits. Rejected generation requests don't spend the companion's local allowance.
@@ -138,6 +138,8 @@ The authenticated HTTP bridge listens only on `127.0.0.1:17373`. Its random toke
 Requests use Google's [Gemini Developer API](https://ai.google.dev/api/generate-content): `generateContent`, JSON replies, and base64 PNG `inlineData` for screenshot inputs. API keys are sent in the `x-goog-api-key` header, never in URLs. No server-side conversation or explicit cache is created by the app. Google's [Gemini API terms and data handling policies](https://ai.google.dev/gemini-api/terms) apply to transmitted text and images.
 
 Switching from the earlier build keeps local memories and used allowances. Restart the app, enter your Gemini key in Connection settings, and reload the extension to update its provider disclosure. Earlier provider environment variables are no longer used.
+
+Existing Pip saves migrate to Burt automatically, including token usage, interrupted-request reservations and memories. Memory authors and references use Burt's new name. If a save already has Burt, that record takes precedence. Factory reset restores Burt's new personality.
 
 ## Tests
 

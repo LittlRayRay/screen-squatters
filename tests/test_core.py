@@ -107,9 +107,9 @@ class BridgeTests(unittest.TestCase):
 
 class AITests(unittest.TestCase):
     def run_turn(self, remaining=5000, responses=None, cancelled=None):
-        reply = {"usageMetadata": {"totalTokenCount": 340, "thoughtsTokenCount": 10}, "candidates": [{"content": {"parts": [{"thought": True, "text": "private reasoning, not dialogue"}, {"text": json.dumps({"speech": "B-but what if the moon is cheese?", "memories": [{"target": "Byte", "text": "Pip has a moon cheese theory."}], "move": 4, "vote": "Rex"})}]}}]}
+        reply = {"usageMetadata": {"totalTokenCount": 340, "thoughtsTokenCount": 10}, "candidates": [{"content": {"parts": [{"thought": True, "text": "private reasoning, not dialogue"}, {"text": json.dumps({"speech": "B-but what if the moon is cheese?", "memories": [{"target": "Byte", "text": "Burt has a moon cheese theory."}], "move": 4, "vote": "Rex"})}]}}]}
         with patch("ai.post", side_effect=responses or [{"totalTokens": 300}, reply]) as network:
-            result = companion_turn("test-only", DEFAULT_MODEL, "Pip", [], [], ["Pip", "Byte"], "Hang out", remaining, PAGE, cancelled=cancelled)
+            result = companion_turn("test-only", DEFAULT_MODEL, "Burt", [], [], ["Burt", "Byte"], "Hang out", remaining, PAGE, cancelled=cancelled)
             return result, network.call_args_list
 
     def test_exact_preflight_and_usage(self):
@@ -220,14 +220,14 @@ class AITests(unittest.TestCase):
 
     def test_thinking_config_matches_model_family(self):
         def config(model):
-            return payload(model, "Pip", [], [], [], "Hi")["generationConfig"].get("thinkingConfig")
+            return payload(model, "Burt", [], [], [], "Hi")["generationConfig"].get("thinkingConfig")
         self.assertEqual(config(DEFAULT_MODEL), {"thinkingLevel": "minimal"})
         self.assertEqual(config("gemini-3.8-flash"), {"thinkingLevel": "low"})
         self.assertEqual(config("gemini-2.5-flash"), {"thinkingBudget": 0})
 
     def test_invalid_model_never_calls_network(self):
         with patch("ai.post") as network:
-            result = companion_turn("test-only", "https://evil.example/", "Pip", [], [], [], "Hi", 5000)
+            result = companion_turn("test-only", "https://evil.example/", "Burt", [], [], [], "Hi", 5000)
         self.assertIn("model ID", result.error)
         network.assert_not_called()
 
@@ -270,46 +270,68 @@ class HouseTests(unittest.TestCase):
         self.path = Path(self.temporary.name) / "house.json"
         self.house = House(self.path)
 
+    def test_legacy_pip_migrates_usage_and_cross_agent_memories(self):
+        self.path.write_text(json.dumps({'agents': {
+            'Pip': {'limit': 30000, 'used': 1500, 'reserved': 400, 'awake': True,
+                    'memories': [{'from': 'Byte', 'text': 'Pip liked the game.', 'time': 'old'}]},
+            'Byte': {'memories': [{'from': 'Pip', 'text': 'Pip won once.', 'time': 'old'}]}
+        }}), encoding='utf-8')
+        migrated = House(self.path)
+        self.assertEqual(set(migrated.agents), {'Burt', 'Byte', 'Rex'})
+        self.assertEqual(migrated.agents['Burt']['limit'], 30000)
+        self.assertEqual(migrated.agents['Burt']['used'], 1900)
+        self.assertFalse(migrated.agents['Burt']['awake'])
+        self.assertEqual(migrated.agents['Burt']['memories'][0]['text'], 'Burt liked the game.')
+        self.assertEqual(migrated.agents['Byte']['memories'][0]['from'], 'Burt')
+        migrated.save()
+        saved = json.loads(self.path.read_text(encoding='utf-8'))
+        self.assertNotIn('Pip', saved['agents'])
+        self.assertEqual(House(self.path).agents['Burt']['used'], 1900)
+
+    def test_existing_burt_record_wins_over_legacy_pip(self):
+        self.path.write_text(json.dumps({'agents': {'Burt': {'used': 120}, 'Pip': {'used': 999}}}), encoding='utf-8')
+        self.assertEqual(House(self.path).agents['Burt']['used'], 120)
+
     def test_sleep_at_exhaustion_and_explicit_refill(self):
-        self.house.recharge("Pip", 1000)
-        self.house.wake("Pip")
-        self.house.charge("Pip", 1000)
-        self.assertFalse(self.house.agents["Pip"]["awake"])
-        self.assertFalse(self.house.wake("Pip"))
-        self.house.recharge("Pip", 2000)
-        self.assertTrue(self.house.wake("Pip"))
+        self.house.recharge("Burt", 1000)
+        self.house.wake("Burt")
+        self.house.charge("Burt", 1000)
+        self.assertFalse(self.house.agents["Burt"]["awake"])
+        self.assertFalse(self.house.wake("Burt"))
+        self.house.recharge("Burt", 2000)
+        self.assertTrue(self.house.wake("Burt"))
 
     def test_memories_are_cross_agent_attributed_and_bounded(self):
         for n in range(40):
             self.house.remember("Rex", [{"target": "Byte", "text": f"Game joke {n}"}])
         self.assertEqual(len(self.house.agents["Byte"]["memories"]), 30)
         self.assertEqual(self.house.agents["Byte"]["memories"][0]["from"], "Rex")
-        self.assertFalse(self.house.agents["Pip"]["memories"])
+        self.assertFalse(self.house.agents["Burt"]["memories"])
 
     def test_memory_cannot_target_files_or_personalities(self):
-        self.assertEqual(self.house.remember("Pip", [{"target": "../ai.py", "text": "overwrite"}, None]), [])
-        self.assertEqual(self.house.remember("Pip", [{"target": [], "text": "invalid model output"}]), [])
+        self.assertEqual(self.house.remember("Burt", [{"target": "../ai.py", "text": "overwrite"}, None]), [])
+        self.assertEqual(self.house.remember("Burt", [{"target": [], "text": "invalid model output"}]), [])
 
     def test_sleeping_on_restart_and_crash_reservation(self):
-        self.house.wake("Pip")
-        amount = self.house.reserve("Pip")
+        self.house.wake("Burt")
+        amount = self.house.reserve("Burt")
         recovered = House(self.path)
-        self.assertFalse(recovered.agents["Pip"]["awake"])
-        self.assertEqual(recovered.agents["Pip"]["used"], amount)
-        self.assertEqual(recovered.remaining("Pip"), 0)
+        self.assertFalse(recovered.agents["Burt"]["awake"])
+        self.assertEqual(recovered.agents["Burt"]["used"], amount)
+        self.assertEqual(recovered.remaining("Burt"), 0)
 
     def test_settlement_returns_unused_reservation(self):
-        self.house.reserve("Pip")
-        self.house.settle("Pip", 400)
-        self.assertEqual(self.house.remaining("Pip"), 19600)
+        self.house.reserve("Burt")
+        self.house.settle("Burt", 400)
+        self.assertEqual(self.house.remaining("Burt"), 19600)
 
     def test_factory_reset_round_trip(self):
-        self.house.remember("Rex", [{"target": "Pip", "text": "We won."}])
+        self.house.remember("Rex", [{"target": "Burt", "text": "We won."}])
         self.house.charge("Byte", 1500)
         self.house.reset()
         loaded = House(self.path)
         self.assertEqual(loaded.agents["Byte"]["used"], 0)
-        self.assertEqual(loaded.agents["Pip"]["memories"], [])
+        self.assertEqual(loaded.agents["Burt"]["memories"], [])
 
 
 class GameTests(unittest.TestCase):
@@ -322,16 +344,16 @@ class GameTests(unittest.TestCase):
             game.move("Byte", 5)
 
     def test_ttt_rejects_out_of_turn_occupied_and_boolean(self):
-        game = TicTacToe("You", "Pip")
-        for actor, cell in [("Pip", 0), ("You", True), ("You", -1)]:
+        game = TicTacToe("You", "Burt")
+        for actor, cell in [("Burt", 0), ("You", True), ("You", -1)]:
             with self.assertRaises(ValueError):
                 game.move(actor, cell)
         game.move("You", 0)
         with self.assertRaises(ValueError):
-            game.move("Pip", 0)
+            game.move("Burt", 0)
 
     def test_mafia_role_is_private(self):
-        game = Mafia(["You", "Pip", "Byte", "Rex"], random.Random(1))
+        game = Mafia(["You", "Burt", "Byte", "Rex"], random.Random(1))
         town = next(p for p in game.players if p != game.mafia)
         view = game.view(town)
         self.assertEqual(view["your_role"], "town")
@@ -341,7 +363,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual(game.view(game.mafia)["your_role"], "mafia")
 
     def test_mafia_town_can_win_and_vote_is_validated(self):
-        game = Mafia(["You", "Pip", "Byte", "Rex"], random.Random(1))
+        game = Mafia(["You", "Burt", "Byte", "Rex"], random.Random(1))
         for p in game.players:
             game.act(p)
         for p in game.players:
@@ -352,7 +374,7 @@ class GameTests(unittest.TestCase):
         self.assertIn("town wins", game.result)
 
     def test_mafia_tie_night_and_mafia_victory(self):
-        game = Mafia(["You", "Pip", "Byte", "Rex"], random.Random(1))
+        game = Mafia(["You", "Burt", "Byte", "Rex"], random.Random(1))
         for p in game.players:
             game.act(p)
         for i, p in enumerate(game.players):

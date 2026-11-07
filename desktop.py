@@ -123,7 +123,7 @@ class ScreenSquatters:
         try:
             self.server = BridgeServer(self.token, self.inbox, port=port)
         except OSError:
-            raise RuntimeError("Port 17373 is busy. Quit the older Pip/Screen Squatters instance first.") from None
+            raise RuntimeError("Port 17373 is busy. Quit the other Screen Squatters instance first.") from None
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         root.title("Screen Squatters | home")
         root.configure(bg=BG)
@@ -150,7 +150,7 @@ class ScreenSquatters:
         self.context_status = tk.StringVar(value="Screen capture OFF | no browser page shared")
         self.build_home()
         self.build_floaters()
-        self.note("Welcome home. Pip, Byte and Rex are asleep. Wake any combination of them; they can chat with you and with each other. Settings has your API key and browser pairing code.")
+        self.note("Welcome home. Burt, Byte and Rex are asleep. Wake any combination of them; they can chat with you and with each other. Settings has your API key and browser pairing code.")
         if self.house.warning:
             self.note(self.house.warning)
         self.refresh()
@@ -395,7 +395,7 @@ class ScreenSquatters:
             self.world.movie_enabled = True
             self.world.movie_corner = self.movie_corner.get()
             self.world.paused = False
-            lines = {"Pip": "P-popcorn acquired!", "Byte": "Movie night. I'll keep the commentary down.", "Rex": "Obviously I get the good seat."}
+            lines = {"Burt": "Umm, I've got popcorn. Wait, are we starting?", "Byte": "Movie night. I'll keep the commentary down.", "Rex": "Obviously I get the good seat."}
             for name in CHARACTERS:
                 resident = self.world.residents[name]
                 if not self.house.agents[name]["awake"]:

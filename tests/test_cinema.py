@@ -16,39 +16,39 @@ class RecoveryTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.house = House(Path(self.temporary.name)/'house.json')
-        self.house.agents['Pip']['used'] = 1000
+        self.house.agents['Burt']['used'] = 1000
 
     def test_sleep_reduces_used_tokens_without_changing_limit(self):
         self.house.sleep_recovery_rate = 600
-        self.assertEqual(self.house.recover_sleep(10, {'Pip'}), {'Pip': 100})
-        self.assertEqual(self.house.agents['Pip']['used'], 900)
-        self.assertEqual(self.house.agents['Pip']['limit'], 20000)
+        self.assertEqual(self.house.recover_sleep(10, {'Burt'}), {'Burt': 100})
+        self.assertEqual(self.house.agents['Burt']['used'], 900)
+        self.assertEqual(self.house.agents['Burt']['limit'], 20000)
 
     def test_fractional_ticks_accumulate_smoothly(self):
         self.house.sleep_recovery_rate = 3
-        self.house.recover_sleep(10, {'Pip'})
-        self.assertEqual(self.house.agents['Pip']['used'], 1000)
-        self.house.recover_sleep(10, {'Pip'})
-        self.assertEqual(self.house.agents['Pip']['used'], 999)
+        self.house.recover_sleep(10, {'Burt'})
+        self.assertEqual(self.house.agents['Burt']['used'], 1000)
+        self.house.recover_sleep(10, {'Burt'})
+        self.assertEqual(self.house.agents['Burt']['used'], 999)
 
     def test_recovery_never_affects_awake_or_pending_agents(self):
-        self.house.wake('Pip')
-        self.house.recover_sleep(60, {'Pip'})
-        self.assertEqual(self.house.agents['Pip']['used'], 1000)
-        self.house.sleep('Pip')
-        self.house.reserve('Pip')
-        self.house.recover_sleep(60, {'Pip'})
-        self.assertEqual(self.house.agents['Pip']['used'], 1000)
-        self.assertEqual(self.house.remaining('Pip'), 0)
+        self.house.wake('Burt')
+        self.house.recover_sleep(60, {'Burt'})
+        self.assertEqual(self.house.agents['Burt']['used'], 1000)
+        self.house.sleep('Burt')
+        self.house.reserve('Burt')
+        self.house.recover_sleep(60, {'Burt'})
+        self.assertEqual(self.house.agents['Burt']['used'], 1000)
+        self.assertEqual(self.house.remaining('Burt'), 0)
 
     def test_zero_rate_pauses_and_large_rate_stops_at_zero(self):
         self.house.sleep_recovery_rate = 0
-        self.house.recover_sleep(600, {'Pip'})
-        self.assertEqual(self.house.agents['Pip']['used'], 1000)
+        self.house.recover_sleep(600, {'Burt'})
+        self.assertEqual(self.house.agents['Burt']['used'], 1000)
         self.house.sleep_recovery_rate = 6000
-        self.house.recover_sleep(60, {'Pip'})
-        self.assertEqual(self.house.agents['Pip']['used'], 0)
-        self.assertEqual(self.house.remaining('Pip'), 20000)
+        self.house.recover_sleep(60, {'Burt'})
+        self.assertEqual(self.house.agents['Burt']['used'], 0)
+        self.assertEqual(self.house.remaining('Burt'), 20000)
 
     def test_recovery_rate_motion_and_corner_preferences_persist(self):
         self.house.sleep_recovery_rate = 250
@@ -66,7 +66,7 @@ class RecoveryTests(unittest.TestCase):
 
 class MovieTests(unittest.TestCase):
     def setUp(self):
-        self.world = World(['Pip','Byte','Rex'], (0,0,1600,900), (1200,600), rng=random.Random(1))
+        self.world = World(['Burt','Byte','Rex'], (0,0,1600,900), (1200,600), rng=random.Random(1))
 
     def test_normal_invites_and_menu_style_commands(self):
         for text in ("Everybody watch something with me", "Let's watch a movie", 'Can we watch this?', 'Movie mode', 'Start movie mode'):
@@ -77,17 +77,17 @@ class MovieTests(unittest.TestCase):
             self.assertIsNone(movie_command(text), text)
 
     def test_frozen_characters_do_not_translate_and_still_go_home(self):
-        self.world.wake('Pip', 0)
+        self.world.wake('Burt', 0)
         self.world.step(.1, .1)
         self.world.freeze(True)
-        resident = self.world.residents['Pip']
+        resident = self.world.residents['Burt']
         at = resident.x, resident.y
         for tick in range(100):
             self.world.step(.1, tick)
         self.assertEqual((resident.x,resident.y), at)
-        self.world.inspect('Pip', (500,500,'test'), 100)
+        self.world.inspect('Burt', (500,500,'test'), 100)
         self.assertEqual(resident.mode, 'idle')
-        self.world.rest('Pip', 101)
+        self.world.rest('Burt', 101)
         self.assertEqual(resident.mode, 'home')
 
     def test_movie_seats_are_distinct_and_reached_without_wandering(self):
@@ -107,31 +107,31 @@ class MovieTests(unittest.TestCase):
     def test_movie_seating_is_an_explicit_rearrangement_even_when_frozen(self):
         self.world.freeze(True)
         self.world.movie_enabled = True
-        self.world.wake('Pip', 0)
-        self.assertEqual(self.world.residents['Pip'].mode, 'seated')
+        self.world.wake('Burt', 0)
+        self.assertEqual(self.world.residents['Burt'].mode, 'seated')
         for corner in ('bottom-left','bottom-right','top-left','top-right'):
             self.world.movie_corner = corner
-            self.world.seat('Pip', 0, immediate=True)
-            resident = self.world.residents['Pip']
+            self.world.seat('Burt', 0, immediate=True)
+            resident = self.world.residents['Burt']
             self.assertTrue(0 <= resident.x <= 1410)
             self.assertTrue(0 <= resident.y <= 670)
 
     def test_ending_movie_restores_normal_body_state(self):
         self.world.movie_enabled = True
-        self.world.wake('Pip', 0)
-        self.world.seat('Pip', 0, immediate=True)
+        self.world.wake('Burt', 0)
+        self.world.seat('Burt', 0, immediate=True)
         self.world.end_movie(10)
         self.assertFalse(self.world.movie_enabled)
-        self.assertEqual(self.world.residents['Pip'].mode, 'idle')
+        self.assertEqual(self.world.residents['Burt'].mode, 'idle')
 
     def test_movie_prompts_focus_on_movie_without_claiming_audio(self):
-        body = payload(DEFAULT_MODEL, 'Pip', [], [], ['Pip'], 'Watch', movie=True)
+        body = payload(DEFAULT_MODEL, 'Burt', [], [], ['Burt'], 'Watch', movie=True)
         instructions = body['systemInstruction']['parts'][0]['text']
         self.assertIn('MOVIE MODE overrides', instructions)
         self.assertIn('Never pretend to hear', instructions)
         self.assertIn('empty speech string', instructions)
         self.assertIn('"mode": "movie"', body['contents'][0]['parts'][0]['text'])
-        normal = payload(DEFAULT_MODEL, 'Pip', [], [], ['Pip'], 'Hi')
+        normal = payload(DEFAULT_MODEL, 'Burt', [], [], ['Burt'], 'Hi')
         self.assertNotIn('MOVIE MODE overrides', normal['systemInstruction']['parts'][0]['text'])
 
 
