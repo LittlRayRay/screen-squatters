@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 
 from house import CHARACTERS
+from cinema import MOVIE_RULES
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -49,6 +50,7 @@ class Turn:
     exhausted: bool = False
     activity: str = "stay"
     interest: dict = field(default_factory=dict)
+    required_tokens: int = 0
 
 
 class GeminiAPIError(RuntimeError):
@@ -72,9 +74,9 @@ class GeminiAPIError(RuntimeError):
         super().__init__(messages.get(code, f"Gemini service error (HTTP {code})."))
 
 
-def payload(model, name, memories, conversation, awake, trigger, observation=None, game=None):
+def payload(model, name, memories, conversation, awake, trigger, observation=None, game=None, movie=False):
     context = {"speaker": name, "awake_friends": awake, "your_memories": memories[-15:],
-               "conversation": conversation[-16:], "situation": trigger, "game": game}
+               "conversation": conversation[-16:], "situation": trigger, "game": game, "mode": "movie" if movie else "normal"}
     content = [{"text": json.dumps(context, ensure_ascii=False)}]
     if observation:
         if observation.get("kind") == "image":
@@ -95,7 +97,7 @@ def payload(model, name, memories, conversation, awake, trigger, observation=Non
         config["thinkingConfig"] = {"thinkingLevel": "minimal" if "flash-lite" in model else "low"}
     elif model.startswith("gemini-2.5-flash"):
         config["thinkingConfig"] = {"thinkingBudget": 0}
-    return {"systemInstruction": {"parts": [{"text": RULES + "\n" + CHARACTERS[name]["personality"]}]},
+    return {"systemInstruction": {"parts": [{"text": RULES + "\n" + CHARACTERS[name]["personality"] + (MOVIE_RULES if movie else "")}]},
             "contents": [{"role": "user", "parts": content}], "generationConfig": config}
 
 
@@ -113,20 +115,21 @@ def post(key, path, body):
 
 
 def companion_turn(key, model, name, memories, conversation, awake, trigger, remaining,
-                   observation=None, game=None, cancelled=None):
+                   observation=None, game=None, cancelled=None, movie=False):
     result = Turn()
     reserved = 0
     try:
         model = model.removeprefix("models/")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", model):
             raise RuntimeError("Enter a Gemini model ID, such as " + DEFAULT_MODEL + ".")
-        body = payload(model, name, memories, conversation, awake, trigger, observation, game)
+        body = payload(model, name, memories, conversation, awake, trigger, observation, game, movie)
         count = post(key, f"/{model}:countTokens", {"generateContentRequest": {"model": "models/" + model, **body}}).get("totalTokens")
         if type(count) is not int or count < 0:
             raise RuntimeError("No valid input token count returned; turn stopped.")
         room = remaining - count
         if room < 96:
             result.exhausted = True
+            result.required_tokens = count+96
             return result
         if cancelled and cancelled.is_set():
             return result

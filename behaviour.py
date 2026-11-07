@@ -67,6 +67,7 @@ class Resident:
     blocked: bool = False
     held_until: float = 0
     pending_speech: str = ""
+    wake_threshold: int = 1000
 
 
 class World:
@@ -77,6 +78,9 @@ class World:
         self.bounds = bounds
         self.home = home
         self.paused = False
+        self.movement_enabled = True
+        self.movie_enabled = False
+        self.movie_corner = "bottom-left"
         self.residents = {name: Resident(*self.home, wake_at=now+self.rng.uniform(45, 120)) for name in names}
 
     def constrain(self, x, y):
@@ -98,19 +102,65 @@ class World:
         resident.next_wander = now+self.rng.uniform(10, 25)
         resident.pending_speech = ""
         resident.gaze = resident.interest = None
+        if self.movie_enabled:
+            self.seat(name, now, immediate=not self.movement_enabled)
+        elif not self.movement_enabled:
+            resident.mode, resident.goal = "idle", None
 
     def rest(self, name, now, immediate=False):
         resident = self.residents[name]
-        resident.mode = "home" if immediate or resident.mode == "home" else "returning"
+        resident.mode = "home" if immediate or not self.movement_enabled or resident.mode == "home" else "returning"
         resident.goal = self.constrain(*self.home)
         resident.wake_at = now+self.rng.uniform(90, 210)
         resident.gaze = resident.interest = None
         resident.pending_speech = ""
         resident.held_until = 0
 
+    def freeze(self, enabled):
+        self.movement_enabled = not enabled
+        if not enabled:
+            return
+        for resident in self.residents.values():
+            resident.gaze = resident.interest = None
+            resident.goal = None
+            if resident.mode == "returning":
+                resident.mode = "home"
+            elif resident.mode == "settling":
+                resident.mode = "seated"
+            elif resident.mode not in {"home", "seated"}:
+                resident.mode = "idle"
+
+    def seat_goal(self, name):
+        names = list(self.residents)
+        left, top, right, bottom = self.bounds
+        span = self.width + (len(names)-1)*125
+        start = left+16 if self.movie_corner.endswith("left") else right-span-16
+        y = top+16 if self.movie_corner.startswith("top") else bottom-self.height-16
+        return self.constrain(start+names.index(name)*125, y)
+
+    def seat(self, name, now, immediate=False):
+        resident = self.residents[name]
+        resident.goal = self.seat_goal(name)
+        resident.mode = "seated" if immediate else "settling"
+        if immediate:
+            resident.x, resident.y = resident.goal
+        resident.gaze = ((self.bounds[0]+self.bounds[2])/2, (self.bounds[1]+self.bounds[3])/2)
+        resident.interest = None
+        resident.held_until = 0
+        resident.next_wander = now+60
+
+    def end_movie(self, now):
+        self.movie_enabled = False
+        for resident in self.residents.values():
+            if resident.mode in {"seated", "settling"}:
+                resident.mode, resident.goal, resident.gaze = "idle", None, None
+                resident.pending_speech = ""
+                resident.next_wander = now+15
+                resident.rest_at = now+self.rng.uniform(240, 480)
+
     def inspect(self, name, point, now, speech=""):
         resident = self.residents[name]
-        if resident.mode in {"home", "returning"}:
+        if not self.movement_enabled or self.movie_enabled or resident.mode in {"home", "returning"}:
             return
         x, y, label = point
         # Stand beside a target, leaving the object itself uncovered.
@@ -124,7 +174,7 @@ class World:
         resident.next_wander = now+35
 
     def due(self, now, awake, eligible, busy=(), playing=False):
-        if self.paused or playing:
+        if self.paused or playing or self.movie_enabled:
             return []
         events = []
         for name, resident in self.residents.items():
@@ -140,21 +190,21 @@ class World:
         for name, resident in self.residents.items():
             if resident.mode == "home" or now < resident.held_until:
                 continue
-            if resident.mode == "idle" and autonomous and not self.paused and now >= resident.next_wander:
+            if resident.mode == "idle" and self.movement_enabled and autonomous and not self.paused and not self.movie_enabled and now >= resident.next_wander:
                 resident.goal, resident.mode = self.destination(), "walking"
                 resident.next_wander = now+self.rng.uniform(20, 45)
             if resident.mode == "interested" and now >= resident.interest_until:
                 resident.mode, resident.interest, resident.gaze = "idle", None, None
-            if resident.mode not in {"walking", "returning", "approaching"} or not resident.goal:
+            if not self.movement_enabled or resident.mode not in {"walking", "returning", "approaching", "settling"} or not resident.goal:
                 continue
-            if not autonomous and resident.mode != "returning":
+            if not autonomous and resident.mode not in {"returning", "settling"}:
                 continue
             dx, dy = resident.goal[0]-resident.x, resident.goal[1]-resident.y
             distance = math.hypot(dx, dy)
-            speed = 240 if resident.mode == "returning" else 180 if resident.mode == "approaching" else 65
+            speed = 240 if resident.mode in {"returning", "settling"} else 180 if resident.mode == "approaching" else 65
             if distance <= max(2, speed*dt):
                 resident.x, resident.y = resident.goal
-                resident.mode = {"returning": "home", "approaching": "interested"}.get(resident.mode, "idle")
+                resident.mode = {"returning": "home", "approaching": "interested", "settling": "seated"}.get(resident.mode, "idle")
                 if resident.mode == "interested":
                     resident.interest_until = now+18
                 arrived.append(name)

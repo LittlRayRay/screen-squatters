@@ -56,6 +56,52 @@ try:
     assert app.house.agents["Pip"]["used"] == 500
     assert app.house.agents["Byte"]["memories"][0]["from"] == "Pip"
     assert "moon was cheese" in app.transcript.get("1.0", "end")
+    # Freeze translations without disabling chat, wake/sleep or manual placement.
+    app.stand_still.set(True)
+    app.stand_still_changed()
+    positions = [(r.x,r.y) for r in app.world.residents.values()]
+    for i in range(20):
+        app.world.step(.1, time.monotonic()+i)
+    assert positions == [(r.x,r.y) for r in app.world.residents.values()]
+    # Movie invitations are local commands and work even before an API key is set.
+    app.key = ''
+    app.question.insert(0, 'Everybody watch something with me')
+    app.send()
+    pump()
+    assert app.movie_mode.get() and app.world.movie_enabled
+    assert all(r.mode == 'seated' for r in app.world.residents.values())
+    assert len(set((r.x,r.y) for r in app.world.residents.values())) == 3
+    assert not app.screen_enabled.get(), 'Movie mode must not silently enable screenshots'
+    before = [(r.x,r.y) for r in app.world.residents.values()]
+    app.apply_intent('Pip', Turn(activity='wander'))
+    assert before == [(r.x,r.y) for r in app.world.residents.values()]
+    # Movie capture prefers a frame to browser controls, while existing capture consent is on.
+    browser = {'hwnd': 123, 'browser': True, 'title': 'Controlled test - Chrome', 'bounds':[0,0,800,600]}
+    app.screen_enabled.set(True)
+    with patch('desktop.foreground', return_value=browser), patch('desktop.capture_window', return_value={'kind':'image','title':'Controlled film frame','image':'data:image/png;base64,YWJj','bounds':[0,0,800,600]}) as screenshot:
+        app.capture_tick()
+        pump()
+    assert screenshot.called
+    assert app.observation['kind'] == 'image'
+    assert app.movie_source_window == 123
+    app.last_capture = app.last_image = 0
+    with patch('desktop.foreground', return_value={**browser,'hwnd':456,'title':'A different app'}), patch('desktop.capture_window') as unrelated:
+        app.capture_tick()
+        pump()
+    unrelated.assert_not_called()
+    assert app.current_observation() is None
+    app.key = 'test-only'
+    app.next_turn = 0
+    with patch.object(app.root, 'after'), patch.object(app, 'capture_tick'), patch.object(app, 'request_turn') as inferred:
+        app.tick()
+    inferred.assert_not_called()
+    app.screen_enabled.set(False)
+    app.question.insert(0, 'Stop movie mode')
+    app.send()
+    assert not app.movie_mode.get()
+    app.stand_still.set(False)
+    app.stand_still_changed()
+    app.key = 'test-only'
     # A model-selected target moves the body beside the current observed window.
     app.intent_contexts['Pip'] = ({'kind':'image','window_id':123,'bounds':[0,0,800,600]}, time.monotonic())
     with patch('desktop.foreground', return_value={'hwnd':123,'bounds':[0,0,800,600]}):
@@ -95,8 +141,8 @@ try:
     if os.name == "nt":
         import ctypes
         from ctypes import wintypes as wt
-        root.lift()
-        root.focus_force()
+        app.show_chat()
+        app.chat.focus_force()
         pump()
         user, _gdi, _kernel = _libraries()
         hwnd = user.GetForegroundWindow()
@@ -115,6 +161,17 @@ try:
         app.world.step(.15, time.monotonic()+i*.15, autonomous=False)
     pump()
     assert all(not win.winfo_viewable() for win, _canvas in app.floaters.values())
+    # Only actual sleep inside the house repays local energy, never a pending turn.
+    app.house.agents['Pip']['used'] = 1000
+    app.world.residents['Pip'].blocked = True
+    app.world.residents['Pip'].wake_threshold = 19500
+    app.set_recovery_rate(600)
+    app.previous_sleepers = {'Pip'}
+    app.last_recovery_tick = 100
+    app.last_recovery_save = 100
+    app.recover_sleep_tick(160)
+    assert app.house.agents['Pip']['used'] == 400
+    assert not app.world.residents['Pip'].blocked
     old_generation = app.generation
     with patch("desktop.messagebox.askyesno", return_value=True):
         app.reset_all()
@@ -124,7 +181,7 @@ try:
     app.handle_turn(old_generation, 0, "Pip", Turn(speech="STALE REPLY", used=500))
     assert "STALE REPLY" not in app.transcript.get("1.0", "end")
     assert app.house.agents["Pip"]["used"] == 0
-    print("UI smoke passed: house-only launch, cutaway/tap-to-wake, optional chat, wandering bodies, screen approach and stale-target cancellation, shared memory, both games, return home, pause and reset.")
+    print("UI smoke passed: house/cutaway, sleep recovery, stand still, chat movie invite, seated companions, movie frame capture, screen interests, shared memory, games, pause and reset.")
 finally:
     app.quit()
     temporary.cleanup()

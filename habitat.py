@@ -43,6 +43,8 @@ class Habitat:
         root.update_idletasks()
         make_noactivate(root.winfo_id())
         self.world = World(CHARACTERS, (0, 0, sw, max(240, sh-55)), self.home_point(), now=time.monotonic())
+        self.world.freeze(app.stand_still.get())
+        self.world.movie_corner = app.movie_corner.get()
         app.world = self.world
         app.cards = {name: {"toggle": None, "energy": tk.StringVar(),
                             "limit": tk.StringVar(value=str(app.house.agents[name]["limit"]))} for name in CHARACTERS}
@@ -91,6 +93,12 @@ class Habitat:
         menu = tk.Menu(app.root, tearoff=False)
         menu.add_command(label="Close the front wall" if self.open else "Enter the house", command=lambda: setattr(self, "open", not self.open))
         menu.add_command(label="Have a chat", command=app.show_chat)
+        menu.add_checkbutton(label="Movie mode", variable=app.movie_mode, command=app.set_movie_mode)
+        corners = tk.Menu(menu, tearoff=False)
+        for value in ("bottom-left", "bottom-right", "top-left", "top-right"):
+            corners.add_radiobutton(label=value.replace("-", " ").title(), variable=app.movie_corner,
+                                    value=value, command=app.set_movie_corner)
+        menu.add_cascade(label="Movie seats", menu=corners)
         games = tk.Menu(menu, tearoff=False)
         games.add_command(label="Tic-tac-toe", command=app.choose_ttt)
         games.add_command(label="Mafia", command=app.start_mafia)
@@ -98,6 +106,14 @@ class Habitat:
         menu.add_separator()
         menu.add_command(label="Settings & memories", command=app.show_settings)
         menu.add_checkbutton(label="Autonomous life", variable=app.autonomy, command=app.autonomy_changed)
+        menu.add_checkbutton(label="Stand still", variable=app.stand_still, command=app.stand_still_changed)
+        recovery = tk.Menu(menu, tearoff=False)
+        for rate in (0, 100, 500, 1000, 5000):
+            recovery.add_radiobutton(label="Off" if not rate else f"{rate:,} tokens / minute", variable=app.recovery_rate,
+                                     value=rate, command=app.set_recovery_rate)
+        recovery.add_separator()
+        recovery.add_command(label="Custom rate...", command=app.custom_recovery_rate)
+        menu.add_cascade(label=f"Sleep recovery ({app.recovery_rate.get():,}/min)", menu=recovery)
         menu.add_checkbutton(label="Automatic conversation", variable=app.hangout)
         menu.add_checkbutton(label="Screen snapshots", variable=app.screen_enabled, command=app.awareness_changed)
         menu.add_command(label="Everyone home / pause", command=app.sleep_all)
@@ -184,7 +200,7 @@ class Habitat:
             if resident.mode == "home":
                 self.paint(c, name, x+46, 157, .55, True, app.frame)
             else:
-                c.create_text(x+46, 155, text="out exploring", fill="#d3c0c1", font=("Segoe UI", 7))
+                c.create_text(x+46, 155, text="watching a movie" if app.movie_mode.get() else "out exploring", fill="#d3c0c1", font=("Segoe UI", 7))
             c.create_text(x+45, 123, text=name, fill=CHARACTERS[name]["color"], font=("Segoe UI", 9, "bold"))
         # A tiny living room: the sofa is the conversation entry point.
         c.create_oval(73, 254, 272, 273, fill="#b48c79", outline="")
@@ -209,7 +225,7 @@ class Habitat:
                 c.create_oval(192, 243, 198, 249, fill="#f5d68b", outline="")
         c.create_polygon(20, 105, 180, 23, 340, 105, fill="#56516f", outline="#c39b9c", width=3)
         c.create_line(37, 100, 180, 35, 324, 100, fill="#77718c", width=2)
-        c.create_text(180, 77, text="screen squatters", fill="#f0d7bb", font=("Segoe UI", 10, "bold"))
+        c.create_text(180, 77, text="movie night" if app.movie_mode.get() else "screen squatters", fill="#f0d7bb", font=("Segoe UI", 10, "bold"))
         c.create_rectangle(150, 280, 210, 290, fill="#c79b7b", outline="")
         capture = app.screen_enabled.get() and bool(app.awake())
         browser = bool(app.awake() and app.page and time.monotonic()-app.page_time < 15)
@@ -281,7 +297,7 @@ class Habitat:
             canvas.delete("all")
             text, until = app.bubbles[name]
             private = getattr(app.game, "phase", None) == "night" and not app.game.result
-            if app.busy_name == name and not private:
+            if app.busy_name == name and not private and not app.movie_mode.get():
                 text, until = "hmm...", now+1
             if resident.mode == "returning":
                 text, until = "heading home...", now+1
@@ -295,5 +311,6 @@ class Habitat:
                 distance = max(1, math.hypot(dx, dy))
                 gaze = (dx/distance, dy/distance)
             self.paint(canvas, name, 95, 161, .95, False, app.frame, gaze=gaze,
-                       pointing=resident.mode == "interested", walking=resident.mode in {"walking", "returning", "approaching"})
+                       pointing=resident.mode == "interested", walking=resident.mode in {"walking", "returning", "approaching", "settling"},
+                       seated=resident.mode == "seated")
             self.marker(name, resident)

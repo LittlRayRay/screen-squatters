@@ -13,6 +13,7 @@ CHARACTERS = {
             "personality": "You are Rex: arrogant, theatrical, a little rude, and convinced you have impeccable taste. You tease your friends, boast about tiny victories, and deliver dry one-liners. Underneath it you like their company. Be mildly snarky, never cruel, hateful, threatening, or degrading. Don't insult appearance, identity, vulnerabilities, or the user's real relationships. You can lose, apologise, and be the butt of a joke."},
 }
 DEFAULT_BUDGET = 20_000
+DEFAULT_RECOVERY_RATE = 1000
 
 
 def defaults():
@@ -24,10 +25,22 @@ class House:
     def __init__(self, path):
         self.path = Path(path)
         self.agents = defaults()
+        self.sleep_recovery_rate = DEFAULT_RECOVERY_RATE
+        self.stand_still = False
+        self.movie_corner = "bottom-left"
+        self._sleep_credit = {name: 0.0 for name in CHARACTERS}
         self.warning = ""
         if self.path.exists():
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
+                preferences = data.get("preferences", {})
+                if isinstance(preferences, dict):
+                    rate = preferences.get("sleep_recovery_per_minute")
+                    if type(rate) is int and 0 <= rate <= 1_000_000:
+                        self.sleep_recovery_rate = rate
+                    self.stand_still = preferences.get("stand_still") is True
+                    if preferences.get("movie_corner") in ("bottom-left", "bottom-right", "top-left", "top-right"):
+                        self.movie_corner = preferences["movie_corner"]
                 for name, agent in self.agents.items():
                     saved = data.get("agents", {}).get(name, {})
                     agent["limit"] = max(256, min(1_000_000, int(saved.get("limit", DEFAULT_BUDGET))))
@@ -48,7 +61,9 @@ class House:
         for agent in data.values():
             agent["awake"] = False  # Never resume paid activity after a restart.
         temporary = self.path.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"version": 1, "agents": data}, indent=2), encoding="utf-8")
+        preferences = {"sleep_recovery_per_minute": self.sleep_recovery_rate,
+                       "stand_still": self.stand_still, "movie_corner": self.movie_corner}
+        temporary.write_text(json.dumps({"version": 2, "agents": data, "preferences": preferences}, indent=2), encoding="utf-8")
         temporary.replace(self.path)
 
     def remaining(self, name):
@@ -104,6 +119,27 @@ class House:
             accepted.append((target, text))
         return accepted
 
+    def recover_sleep(self, seconds, sleeping):
+        """Regenerate local energy only, never refund API costs or pending requests."""
+        changed = {}
+        if seconds <= 0:
+            return changed
+        for name, agent in self.agents.items():
+            if name not in sleeping or agent["awake"] or agent["reserved"] or not agent["used"]:
+                self._sleep_credit[name] = 0.0
+                continue
+            credit = self._sleep_credit[name] + seconds*self.sleep_recovery_rate/60
+            recovered = min(agent["used"], int(credit))
+            agent["used"] -= recovered
+            self._sleep_credit[name] = credit-int(credit) if agent["used"] else 0.0
+            if recovered:
+                changed[name] = recovered
+        return changed
+
     def reset(self):
         self.agents = defaults()
+        self.sleep_recovery_rate = DEFAULT_RECOVERY_RATE
+        self.stand_still = False
+        self.movie_corner = "bottom-left"
+        self._sleep_credit = {name: 0.0 for name in CHARACTERS}
         self.save()

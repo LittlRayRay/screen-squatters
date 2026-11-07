@@ -33,9 +33,11 @@ They know they're AI companions. Their prompts emphasise social conversation and
 
 Autonomous life starts enabled. Everyone initially sleeps inside; their first natural wake times are staggered 45–120 seconds after startup. Each housemate wanders at a leisurely pace, stays on the primary display, and normally rests after 4–8 minutes awake. Rest lasts roughly 90–210 seconds before an eligible housemate wakes again. Gemini can also decide to wander or rest during a conversation turn. Game participants defer their natural rest cycle until the game ends.
 
-Local movement and rhythm timers use no API tokens. Conversations still use each character's allowance. Budget exhaustion prevents automatic waking until you refill; there is no automatic refill. Moving or spontaneously waking windows don't take keyboard focus. Dragging a character holds off their next movement for 20 seconds so they don't fight your placement.
+Local movement and rhythm timers use no API tokens. Conversations still use each character's allowance. Sleeping gradually restores their available local allowance; a spent character can wake again once enough energy has recovered for another turn. Moving or spontaneously waking windows don't take keyboard focus. Dragging a character holds off their next movement for 20 seconds so they don't fight your placement.
 
 Disable **Autonomous life** from the house context menu or **Settings → Housemates** to stop automatic wandering and wake/rest cycles; explicit sleep still lets them walk home. Manual wake, chat and dragging remain available. Rhythms restart with everyone asleep on app launch. The house and its context menu remain available even when everyone is asleep.
+
+**Stand still**, in the house or character context menu, is a separate switch: it freezes autonomous movement while leaving chat and wake/rest behaviour available. Manual dragging still works. Sending someone home while frozen hides them immediately instead of leaving them stuck halfway home. The setting is remembered after restarting.
 
 ## Looking at something interesting
 
@@ -51,7 +53,11 @@ Each character has a separate allowance (default 20,000 tokens). Input, reply **
 
 Before each inference, the app calls Gemini's [`countTokens` endpoint](https://ai.google.dev/api/tokens) with the intended generation request, including system instructions and image parts. If the remaining allowance cannot fit the counted input and a minimum reply, the character goes home. Otherwise, `maxOutputTokens` is capped to fit. Gemini's reported `usageMetadata.totalTokenCount`, including thinking tokens, is reconciled after the response; if the provider exceeds its preflight allowance, automatic hangout stops. There is only one model turn in flight at a time. The default Flash-Lite model uses minimal thinking; Gemini 3 Flash/Pro models use low thinking, and Gemini 2.5 Flash models disable thinking to preserve room for short replies. Very small output budgets can still produce truncated JSON and pause hangout.
 
-In **Settings → Housemates**, enter a new allowance (256–1,000,000) and click **Refill tokens** to reset that character's used count. Ordinary sleep/wake doesn't reset usage. You cannot refill a character during its in-flight turn.
+In **Settings → Housemates**, enter a new allowance (256–1,000,000) and click **Refill tokens** to reset that character's used count immediately. Otherwise, **used tokens decrease gradually while the character is asleep inside the house**, increasing available energy without changing its maximum allowance. Recovery defaults to **1,000 tokens per minute per sleeping companion**.
+
+Right-click the house → **Sleep recovery** to choose Off, 100, 500, 1,000 or 5,000 tokens per minute, or enter a custom rate (0–1,000,000). Fractional ticks accumulate so low rates work smoothly. The rate and recovered counts are saved locally; recovery runs only while the app is open. Awake characters, those still walking home, and requests with tokens still reserved don't recover. Characters exhausted before a usable request could fit wait until enough tokens have recovered before automatically waking.
+
+Recovery restores the app's local energy allowance; it does not refund provider charges. Recovering and waking again can lead to further paid API usage, so this allowance is not a lifetime spending cap. You cannot manually refill a character during its in-flight turn.
 
 The allowance remaining for an in-flight request is reserved on disk before sending. On success, unused reservation is returned. If usage cannot be verified, a conservative reservation is charged and automatic hangout pauses. If the app is closed or crashes during a request, the entire remaining reservation is counted on restart because the provider may still have billed it. This favours stopping over silently overspending; explicit refill/reset is available. Usage reported by the provider remains authoritative for billing.
 
@@ -72,6 +78,18 @@ Memories, allowances and usage are saved in `.local/house.json`, which is exclud
 **Mafia:** wake all three. The four players are you, Pip, Byte and Rex, with one randomly assigned mafia member and three townsfolk. Everyone gets a discussion turn and a vote; ties eliminate nobody. At night the mafia secretly chooses one player to eliminate. The town wins by voting out the mafia; the mafia wins at parity. Eliminated players spectate. Your own role appears in the game window; each model receives only its own role. Night speech isn't published, and per-character token counters are hidden during Mafia to avoid revealing the actor. There are no doctor/detective roles in this four-player version.
 
 Speak in the living room or click pass during your discussion turn. Vote/choose a night target in the game window. Game inference uses each character's own allowance. Sending a player home or exhausting their budget ends the current game. An API error ends the game and pauses automatic hangout rather than retrying paid requests repeatedly.
+
+## Movie mode
+
+Type **“Everybody watch something with me”**, **“Let's watch a movie”** or **“Movie mode”** into chat. You can also toggle **Movie mode** in the house or character context menu. The invitation works without an API key: everyone with available energy gathers on little armchairs with popcorn. By default they sit in the bottom-left corner; **Movie seats** in the house menu selects any corner. When Stand still is on, an explicit movie invitation places them directly in their seats. You can drag an individual chair to another spot.
+
+While watching, they stay seated and defer natural wandering/rest, except that exhausted companions still go home. Recovering housemates can rejoin when their sleep timer and energy permit it. Ending movie mode packs away the chairs and resumes ordinary behaviour. **Stop movie mode** or **“We're done watching”** exits; starting a game or choosing **Everyone home / pause** also ends it. Movie mode itself isn't resumed automatically after an app restart; the seat corner is remembered.
+
+Movie conversations focus on the shared film/show/video. Automatic reactions are quieter and less frequent (roughly 60–100 seconds after a turn completes), and no automatic inference runs without a recent shared observation. Empty/quiet replies are allowed. Direct questions still receive responses from the awake companions. Uncheck **Automatic conversation** to watch without unsolicited reactions. Movie turns ignore wander/inspect/rest intents, and don't write plot details into durable memories.
+
+Movie mode **does not switch on screen capture**. Enable **Screen snapshots** or share visible captions/text through the extension. With screenshot permission on, movie mode prefers video frames over browser controls. It binds to the first observed foreground window/title and pauses observations when you switch apps or pages, so unrelated content doesn't become movie commentary. Invite them again (or toggle mode off/on) to watch a different window/title.
+
+This is periodic still-frame/caption awareness, not continuous video or audio listening. The characters are instructed not to invent scenes, dialogue, music, motion, future plot or spoilers. Player controls/title alone aren't a basis for scene reactions. Protected video may produce black screenshots. Live reaction quality depends on Gemini, a working key and API credits.
 
 ## Browser extension
 
@@ -108,7 +126,7 @@ The authenticated HTTP bridge listens only on `127.0.0.1:17373`. Its random toke
 - **Pairing rejected:** copy the code again from Connection settings. Deleting `.local` regenerates it on next launch.
 - **HTTP 402 / prepaid credits depleted:** the key may be valid and `countTokens` may work while generation is blocked by billing. Open [Google AI Studio Projects](https://ai.studio/projects), check the API project's billing and add prepaid credits. Rejected generation requests don't spend the companion's local allowance.
 - **Other AI errors:** messages include the HTTP code. Check key, API quota, and model compatibility. Automatic hangout pauses after errors; re-enable it after fixing the connection. Explicit client rejections (including 400/401/402/403/404/429) return their token reservation. Timeouts and server errors retain a conservative reservation because usage is uncertain.
-- **Character falls asleep before reaching the exact limit:** the next input plus a usable reply wouldn't fit. Refill its allowance.
+- **Character falls asleep before reaching the exact limit:** the next input plus a usable reply wouldn't fit. Let it recover while sleeping, increase the sleep recovery rate, or refill its allowance.
 - **High usage:** context is charged on every turn, not just visible dialogue. Shorter context and fewer awake housemates reduce usage.
 
 Requests use Google's [Gemini Developer API](https://ai.google.dev/api/generate-content): `generateContent`, JSON replies, and base64 PNG `inlineData` for screenshot inputs. API keys are sent in the `x-goog-api-key` header, never in URLs. No server-side conversation or explicit cache is created by the app. Google's [Gemini API terms and data handling policies](https://ai.google.dev/gemini-api/terms) apply to transmitted text and images.
@@ -123,6 +141,6 @@ node tests/extension.cjs
 python tests/ui_smoke.py
 ```
 
-Core tests cover budgets, crash reservations, memory isolation, reset, game rules, role privacy, bridge authentication, snapshot selection and PNG encoding. Node tests use isolated mocked Chrome APIs for popup/worker contracts and text filtering. The UI smoke check uses a temporary house and random local port, mocks AI replies, opens real windows, exercises both games and captures only its own controlled window to verify native PNG encoding. It closes its windows afterward. No live API calls are made by the tests. Real model behaviour and extension installation/permissions still require testing with your API account and browser.
+Core tests cover budgets, sleep recovery, frozen movement, movie commands/seats/prompts, crash reservations, memory isolation, reset, game rules, role privacy, bridge authentication, snapshot selection and PNG encoding. Node tests use isolated mocked Chrome APIs for popup/worker contracts and text filtering. The UI smoke check uses a temporary house and random local port, mocks AI replies/movie frames, opens real windows, exercises both games, movie invitations and source isolation, and captures only its own opaque conversation window to verify native PNG encoding. It closes its windows afterward. No live API calls are made by the tests. Real model behaviour and extension installation/permissions still require testing with your API account and browser.
 
 To diagnose connectivity, run `python diagnose_gemini.py`. It prompts for a key with hidden input (never saved), then checks model availability and token counting. Add `--generate` to also make one short generation request, which may use API credits. `--model MODEL_ID` selects a different model. Diagnostic output includes HTTP codes and usage metadata, not credentials or conversation/page content.

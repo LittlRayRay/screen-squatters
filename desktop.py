@@ -9,7 +9,7 @@ import secrets
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from ai import DEFAULT_MODEL, companion_turn
 from bridge import BridgeServer, PORT
@@ -17,18 +17,27 @@ from games import Mafia, TicTacToe
 from house import CHARACTERS, House
 from habitat import Habitat
 from behaviour import interest_point
+from cinema import movie_command
 from screen import browser_snapshot_matches, capture_window, foreground, make_noactivate
 
 BG, PANEL, FG, MUTED = "#171923", "#242738", "#f1edff", "#abaec7"
 ACCENT, TRANSPARENT = "#c5b0ff", "#010203"
 
 
-def draw_friend(canvas, name, x, y, scale=1, asleep=False, phase=0, gaze=(0, 0), pointing=False, walking=False):
+def draw_friend(canvas, name, x, y, scale=1, asleep=False, phase=0, gaze=(0, 0), pointing=False, walking=False, seated=False):
     color = CHARACTERS[name]["color"]
     bob = 0 if asleep else math.sin(phase / (3 if walking else 10)) * 3
     def box(a, b, c, d):
         return x+a*scale, y+(b+bob)*scale, x+c*scale, y+(d+bob)*scale
     canvas.create_oval(*box(-34, 42, 34, 53), fill="#343247", outline="")
+    if seated:
+        canvas.create_rectangle(*box(-42, -3, 42, 44), fill="#675b79", outline="#9d87ad", width=2)
+        canvas.create_oval(*box(-35, 1, 35, 43), fill="#827290", outline="")
+        canvas.create_rectangle(*box(-43, 27, 43, 49), fill="#827290", outline="#ae95bd", width=2)
+        canvas.create_rectangle(*box(-48, 19, -32, 44), fill="#a18bad", outline="#675b79", width=2)
+        canvas.create_rectangle(*box(32, 19, 48, 44), fill="#a18bad", outline="#675b79", width=2)
+        for leg in (-31, 27):
+            canvas.create_rectangle(*box(leg, 49, leg+5, 62), fill="#cda883", outline="")
     for foot in (-20, 11):
         canvas.create_oval(*box(foot, 28, foot+15, 47), fill=color, outline="#5f5574", width=2)
     canvas.create_oval(*box(-37, -15, -17, 9), fill=color, outline="")
@@ -63,6 +72,13 @@ def draw_friend(canvas, name, x, y, scale=1, asleep=False, phase=0, gaze=(0, 0),
         points = (x+direction*24*scale, y+(7+bob)*scale, x+direction*53*scale, y+(gaze[1]*20+bob)*scale)
         canvas.create_line(*points, fill="#5f5574", width=max(3, int(10*scale)), capstyle="round")
         canvas.create_line(*points, fill=color, width=max(2, int(6*scale)), capstyle="round")
+    if seated:
+        points = [(17, 15), (41, 15), (37, 43), (21, 43)]
+        canvas.create_polygon(*[v for a, b in points for v in (x+a*scale, y+(b+bob)*scale)], fill="#ce6769", outline="#7f484f", width=1)
+        for stripe in (24, 32):
+            canvas.create_line(x+stripe*scale, y+(17+bob)*scale, x+stripe*scale, y+(41+bob)*scale, fill="#fff0d2", width=max(2,int(4*scale)))
+        for px, py in ((19,14),(24,10),(29,14),(34,9),(39,14),(28,7)):
+            canvas.create_oval(*box(px-4, py-3, px+4, py+4), fill="#ffe3a0", outline="#cbaa6d")
 
 
 class ScreenSquatters:
@@ -114,6 +130,16 @@ class ScreenSquatters:
         root.tk.call("tk", "scaling", 1.333333)
         root.protocol("WM_DELETE_WINDOW", self.quit)
         self.autonomy = tk.BooleanVar(value=True)
+        self.stand_still = tk.BooleanVar(value=self.house.stand_still)
+        self.recovery_rate = tk.IntVar(value=self.house.sleep_recovery_rate)
+        self.movie_mode = tk.BooleanVar(value=False)
+        self.movie_corner = tk.StringVar(value=self.house.movie_corner)
+        self.movie_source_window = None
+        self.movie_source_title = ""
+        self.last_recovery_tick = time.monotonic()
+        self.last_recovery_save = self.last_recovery_tick
+        self.recovery_dirty = False
+        self.previous_sleepers = set()
         self.intent_contexts = {}
         self.interest_sources = {}
         self.hangout = tk.BooleanVar(value=True)
@@ -185,7 +211,7 @@ class ScreenSquatters:
         self.transcript.configure(state="disabled")
         self.transcript.see("end")
         if remember:
-            if name in CHARACTERS:
+            if name in CHARACTERS and not self.movie_mode.get():
                 previous = next((line["speaker"] for line in reversed(self.conversation) if line["speaker"] in CHARACTERS and line["speaker"] != name), None)
                 resident = self.world.residents[name]
                 if previous and not resident.interest and self.house.agents[previous]["awake"]:
@@ -224,7 +250,8 @@ class ScreenSquatters:
                 self.world.wake(name, time.monotonic())
             elif not agent["awake"] and resident.mode not in {"home", "returning"}:
                 self.world.rest(name, time.monotonic())
-            energy = f"{'Awake' if agent['awake'] else 'At home'} | {agent['used']:,} / {agent['limit']:,} tokens"
+            state = "Watching" if agent["awake"] and self.movie_mode.get() else "Awake" if agent["awake"] else "Resting"
+            energy = f"{state} | {agent['used']:,} / {agent['limit']:,} tokens used"
             if agent["reserved"]:
                 energy += " | turn reserved"
             if isinstance(self.game, Mafia) and not self.game.result:
@@ -244,7 +271,7 @@ class ScreenSquatters:
                 self.world.paused = False
             self.world.wake(name, time.monotonic())
             self.note(name + (" decided to wake up and explore." if automatic else " woke up and came out of the house."))
-            self.next_turn = time.monotonic() + 2
+            self.next_turn = time.monotonic() + (45 if self.movie_mode.get() else 2)
             if not self.key and not automatic:
                 self.note("Preview mode: add an API key in Settings for conversations and AI game turns.")
             self.save()
@@ -267,6 +294,8 @@ class ScreenSquatters:
         self.refresh()
 
     def sleep_all(self):
+        if self.movie_mode.get():
+            self.set_movie_mode(False, quiet=True)
         self.world.paused = True
         self.cancelled.set()
         self.pending.clear()
@@ -291,6 +320,115 @@ class ScreenSquatters:
         self.refresh()
         self.note(name + " has a fresh token allowance. Wake them when you're ready.")
 
+    def recover_sleep_tick(self, now=None):
+        now = time.monotonic() if now is None else now
+        elapsed = max(0, now-self.last_recovery_tick)
+        self.last_recovery_tick = now
+        sleepers = {name for name, agent in self.house.agents.items()
+                    if not agent["awake"] and self.world.residents[name].mode == "home" and not agent["reserved"]}
+        recovered = self.house.recover_sleep(elapsed, sleepers & self.previous_sleepers)
+        self.previous_sleepers = sleepers
+        for name in recovered:
+            resident = self.world.residents[name]
+            if resident.blocked and self.house.remaining(name) >= resident.wake_threshold:
+                resident.blocked = False
+        if recovered:
+            self.recovery_dirty = True
+            self.refresh()
+        if self.recovery_dirty and now-self.last_recovery_save >= 15:
+            if self.save():
+                self.recovery_dirty = False
+            self.last_recovery_save = now
+        return recovered
+
+    def set_recovery_rate(self, rate=None):
+        if rate is None:
+            rate = self.recovery_rate.get()
+        if type(rate) is not int or not 0 <= rate <= 1_000_000:
+            self.note("Choose a recovery rate from 0 to 1,000,000 tokens per minute.")
+            return
+        self.recover_sleep_tick()
+        self.house.sleep_recovery_rate = rate
+        self.recovery_rate.set(rate)
+        self.save()
+
+    def custom_recovery_rate(self):
+        rate = simpledialog.askinteger("Sleep recovery", "Tokens recovered per sleeping companion per minute (0 = off):",
+                                       initialvalue=self.recovery_rate.get(), minvalue=0, maxvalue=1_000_000, parent=self.root)
+        if rate is not None:
+            self.set_recovery_rate(rate)
+
+    def stand_still_changed(self):
+        self.house.stand_still = self.stand_still.get()
+        for name, resident in self.world.residents.items():
+            if resident.pending_speech:
+                self.bubbles[name] = (resident.pending_speech[:180], time.monotonic()+18)
+                resident.pending_speech = ""
+        self.world.freeze(self.stand_still.get())
+        self.interest_sources.clear()
+        self.save()
+
+    def set_movie_corner(self):
+        self.house.movie_corner = self.movie_corner.get()
+        self.world.movie_corner = self.house.movie_corner
+        if self.movie_mode.get():
+            for name in self.awake():
+                self.world.seat(name, time.monotonic(), immediate=self.stand_still.get())
+        self.save()
+
+    def set_movie_mode(self, enabled=None, quiet=False):
+        enabled = self.movie_mode.get() if enabled is None else enabled
+        self.scene += 1
+        self.cancelled.set()
+        self.pending.clear()
+        self.movie_mode.set(enabled)
+        self.intent_contexts.clear()
+        self.interest_sources.clear()
+        self.observation = None
+        self.capture_epoch += 1
+        self.last_image = 0
+        self.movie_source_window = None
+        self.movie_source_title = ""
+        if enabled:
+            self.cancel_game("Putting the game away for movie night.")
+            self.world.movie_enabled = True
+            self.world.movie_corner = self.movie_corner.get()
+            self.world.paused = False
+            lines = {"Pip": "P-popcorn acquired!", "Byte": "Movie night. I'll keep the commentary down.", "Rex": "Obviously I get the good seat."}
+            for name in CHARACTERS:
+                resident = self.world.residents[name]
+                if not self.house.agents[name]["awake"]:
+                    if resident.blocked or not self.house.wake(name):
+                        continue
+                    self.world.wake(name, time.monotonic())
+                self.world.seat(name, time.monotonic(), immediate=self.stand_still.get())
+                resident.pending_speech = lines[name]
+                if resident.mode == "seated":
+                    self.bubbles[name] = (lines[name], time.monotonic()+12)
+                    resident.pending_speech = ""
+            self.status.set("Movie mode | quiet reactions to shared frames or captions")
+            if not quiet:
+                self.note("Movie night! Everyone with energy is taking a seat. Enable screen snapshots or share captions so they can follow along. Movie mode doesn't enable screen capture automatically.")
+        else:
+            self.world.end_movie(time.monotonic())
+            self.status.set("Movie mode ended. Back to hanging out.")
+            if not quiet:
+                self.note("Movie mode ended. The chairs and popcorn are packed away.")
+        self.next_turn = time.monotonic()+45
+        self.save()
+        self.refresh()
+
+    def current_observation(self):
+        now = time.monotonic()
+        if self.observation and now-self.observation_time <= 35:
+            return deepcopy(self.observation)
+        maximum_age = 35 if self.movie_mode.get() else 300
+        if self.page and not self.page.get("automatic") and now-self.page_time < maximum_age:
+            if self.movie_mode.get() and self.movie_source_title and self.page.get("title", "").lower() not in self.movie_source_title.lower():
+                return None
+            return deepcopy(self.page)
+        return None
+
     def autonomy_changed(self):
         if self.autonomy.get():
             self.world.paused = False
@@ -299,11 +437,13 @@ class ScreenSquatters:
                     resident.wake_at = time.monotonic()+self.world.rng.uniform(20, 60)
 
     def apply_intent(self, name, result):
-        if not self.autonomy.get() or not self.house.agents[name]["awake"]:
+        if self.movie_mode.get() or not self.autonomy.get() or not self.house.agents[name]["awake"]:
             return
         resident = self.world.residents[name]
         if result.activity == "rest":
             self.sleep(name)
+        elif self.stand_still.get():
+            return
         elif result.activity == "wander":
             resident.mode, resident.goal = "walking", self.world.destination()
             resident.next_wander = time.monotonic()+35
@@ -469,6 +609,17 @@ class ScreenSquatters:
             self.note("Factory state was restored in memory, but it could not be saved. Check folder permissions before restarting.")
             self.refresh()
             return
+        self.movie_mode.set(False)
+        self.movie_source_window = None
+        self.movie_source_title = ""
+        self.world.end_movie(time.monotonic())
+        self.recovery_rate.set(self.house.sleep_recovery_rate)
+        self.stand_still.set(self.house.stand_still)
+        self.world.freeze(self.stand_still.get())
+        self.movie_corner.set(self.house.movie_corner)
+        self.world.movie_corner = self.house.movie_corner
+        self.previous_sleepers.clear()
+        self.recovery_dirty = False
         self.bubbles = {name: ("", 0) for name in CHARACTERS}
         self.transcript.configure(state="normal")
         self.transcript.delete("1.0", "end")
@@ -479,10 +630,16 @@ class ScreenSquatters:
         self.note("Factory reset complete. Everyone is home, with fresh memories and allowances.")
 
     def send(self):
+        text = self.question.get().strip()[:2000]
+        command = movie_command(text)
+        if command:
+            self.question.delete(0, "end")
+            self.append("You", text)
+            self.set_movie_mode(command == "start")
+            return
         if self.busy:
             self.status.set("One housemate is still speaking. Try again when their turn finishes.")
             return
-        text = self.question.get().strip()[:2000]
         if not text:
             return
         if not self.awake():
@@ -521,16 +678,10 @@ class ScreenSquatters:
             return
         generation, scene = self.generation, self.scene
         game = self.game.view(name) if self.game and not self.game.result else None
-        observation = None
-        now = time.monotonic()
-        if not game:
-            if self.observation and now - self.observation_time <= 35:
-                observation = deepcopy(self.observation)
-            elif self.page and not self.page.get("automatic") and now - self.page_time < 300:
-                observation = deepcopy(self.page)
+        observation = self.current_observation() if not game else None
         self.intent_contexts[name] = (deepcopy(observation), time.monotonic())
         args = (self.key, self.model, name, deepcopy(agent["memories"]), deepcopy(self.conversation),
-                self.awake(), trigger, remaining, observation, game, self.cancelled)
+                self.awake(), trigger, remaining, observation, game, self.cancelled, self.movie_mode.get())
         self.refresh()
         def work():
             result = companion_turn(*args)
@@ -553,8 +704,9 @@ class ScreenSquatters:
             self.cancel_game("Game paused after an AI error. Start a new game after fixing the connection.")
         elif result.exhausted:
             self.world.residents[name].blocked = True
+            self.world.residents[name].wake_threshold = result.required_tokens or 1000
             self.house.sleep(name)
-            self.note(name + " is out of energy for another turn and went home. Refill their allowance to wake them again.")
+            self.note(name + " is out of energy for another turn and went home. They'll recover while sleeping; you can also refill their allowance.")
             if self.game and not self.game.result:
                 self.cancel_game("Game ended: a player needs more tokens.")
         elif active:
@@ -564,7 +716,7 @@ class ScreenSquatters:
             if not self.game or self.game.result:
                 self.apply_intent(name, result)
             # Never persist game secrets, including accidentally generated memory updates.
-            if not self.game or self.game.result:
+            if (not self.game or self.game.result) and not self.movie_mode.get():
                 accepted = self.house.remember(name, result.memories)
                 for target, _text in accepted:
                     self.note(name + " left a note in " + target + "'s memory.")
@@ -573,11 +725,13 @@ class ScreenSquatters:
         if not self.house.remaining(name) and self.game and not self.game.result:
             self.cancel_game("Game ended: a player ran out of tokens.")
         if active and not result.exhausted and not self.house.remaining(name):
+            self.world.residents[name].blocked = True
+            self.world.residents[name].wake_threshold = min(self.house.agents[name]["limit"], 1000)
             self.note(name + " used their allowance and went home to sleep.")
         self.save()
         self.refresh()
-        self.status.set("All quiet at home." if not self.awake() else "Hanging out" if self.hangout.get() else "Automatic hangout paused")
-        self.next_turn = time.monotonic() + (2 if self.pending or (self.game and not self.game.result) else 25)
+        self.status.set("All quiet at home." if not self.awake() else "Automatic conversation paused" if not self.hangout.get() else "Movie mode | watching quietly" if self.movie_mode.get() else "Hanging out")
+        self.next_turn = time.monotonic() + (2 if self.pending or (self.game and not self.game.result) else self.world.rng.uniform(60, 100) if self.movie_mode.get() else 25)
 
     def capture_tick(self):
         now = time.monotonic()
@@ -588,6 +742,8 @@ class ScreenSquatters:
         epoch = self.capture_epoch
         page, age = deepcopy(self.page), now - self.page_time
         screenshots = self.screen_enabled.get()
+        movie = self.movie_mode.get()
+        source_window, source_title = self.movie_source_window, self.movie_source_title
         try:
             interval = max(15, min(300, int(self.capture_interval.get())))
         except (tk.TclError, ValueError):
@@ -599,7 +755,11 @@ class ScreenSquatters:
         def work():
             try:
                 window = foreground()
-                if browser_snapshot_matches(window, page, age):
+                wrong_movie_source = bool(movie and source_window is not None and window and (
+                    window["hwnd"] != source_window or source_title.lower() not in window["title"].lower()))
+                if wrong_movie_source:
+                    observation = None
+                elif browser_snapshot_matches(window, page, age) and not (movie and screenshots):
                     observation = {"kind": "page", **page, "bounds": window["bounds"], "window_id": window["hwnd"]}
                 elif capture_image and window:
                     observation = capture_window(window)
@@ -618,7 +778,12 @@ class ScreenSquatters:
         if self.closing:
             return
         now = time.monotonic()
-        if self.autonomy.get():
+        self.recover_sleep_tick(now)
+        if self.movie_mode.get() and not self.world.paused:
+            for name, resident in self.world.residents.items():
+                if not self.house.agents[name]["awake"] and resident.mode == "home" and not resident.blocked and now >= resident.wake_at and self.house.remaining(name) > 0:
+                    self.toggle(name, automatic=True)
+        elif self.autonomy.get():
             eligible = [name for name in CHARACTERS if self.house.remaining(name) > 0]
             for action, name in self.world.due(now, self.awake(), eligible, busy=[self.busy_name, *self.pending],
                                                playing=bool(self.game and not self.game.result)):
@@ -637,14 +802,18 @@ class ScreenSquatters:
                 while self.pending and self.pending[0] not in self.awake():
                     self.pending.popleft()
                 if self.pending:
-                    self.request_turn(self.pending.popleft(), "React to the user and what your housemates just said. Don't repeat their answer.")
+                    self.request_turn(self.pending.popleft(), "Respond to the user about what we're watching. Keep the movie focus." if self.movie_mode.get() else "React to the user and what your housemates just said. Don't repeat their answer.")
                 elif self.hangout.get() and self.awake():
+                    ready = [name for name in self.awake() if not self.movie_mode.get() or self.world.residents[name].mode == "seated"]
+                    if self.movie_mode.get() and not self.current_observation():
+                        ready = []
+                        self.next_turn = now+5
                     names = list(CHARACTERS)
                     for offset in range(1, 4):
                         index = (self.last_speaker + offset) % 3
-                        if names[index] in self.awake():
+                        if names[index] in ready:
                             self.last_speaker = index
-                            self.request_turn(names[index], "Hang out naturally. React to your friends, riff on a joke, notice something in the supplied snapshot, or suggest something fun. Silence is okay: keep it short.")
+                            self.request_turn(names[index], "Watch this moment quietly. Only react briefly if this frame or caption gives you something specific to react to; otherwise leave speech empty." if self.movie_mode.get() else "Hang out naturally. React to your friends, riff on a joke, notice something in the supplied snapshot, or suggest something fun. Silence is okay: keep it short.")
                             break
         self.root.after(500, self.tick)
 
@@ -671,6 +840,9 @@ class ScreenSquatters:
                     if epoch != self.capture_epoch or not self.awake():
                         continue
                     self.observation, self.observation_time = observation, time.monotonic()
+                    if self.movie_mode.get() and observation and self.movie_source_window is None and observation.get("window_id") is not None:
+                        self.movie_source_window = observation["window_id"]
+                        self.movie_source_title = observation.get("title", "")
                     if error and error != self.last_capture_error:
                         self.note("Screen awareness: " + error)
                         self.last_capture_error = error
@@ -710,6 +882,8 @@ class ScreenSquatters:
         if any(player in CHARACTERS and player not in self.awake() for player in game.players):
             self.note("A player went home. Wake everyone taking part before starting the game.")
             return
+        if self.movie_mode.get():
+            self.set_movie_mode(False, quiet=True)
         self.scene += 1
         self.pending.clear()
         self.game = game
@@ -830,7 +1004,7 @@ class ScreenSquatters:
         resident = self.world.residents[name]
         resident.held_until = time.monotonic()+20
         if resident.mode != "returning":
-            resident.mode, resident.goal = "idle", None
+            resident.mode, resident.goal = "seated" if self.movie_mode.get() else "idle", None
             resident.next_wander = time.monotonic()+25
         if not self.dragged:
             self.show_chat()
@@ -841,6 +1015,8 @@ class ScreenSquatters:
         menu.add_command(label="Peek inside the house", command=self.show_home)
         menu.add_command(label="Send " + name + " to sleep", command=lambda: self.sleep(name))
         menu.add_command(label="Memories", command=lambda: self.show_memories(name))
+        menu.add_checkbutton(label="Stand still (everyone)", variable=self.stand_still, command=self.stand_still_changed)
+        menu.add_checkbutton(label="Movie mode", variable=self.movie_mode, command=self.set_movie_mode)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -856,6 +1032,7 @@ class ScreenSquatters:
         self.root.after(40 if active or fading or self.habitat.hover else 250, self.animate)
 
     def quit(self):
+        self.recover_sleep_tick()
         self.closing = True
         self.cancelled.set()
         # Pending reservations stay on disk if inference is still running.
