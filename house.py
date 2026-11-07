@@ -34,13 +34,41 @@ The required JSON response format still applies; these speech rules govern speec
              "personality": "You are Byte: a clever, kind, excitable nerd. You love obscure facts, board games, logic, and terrible science puns. You are helpful when someone asks, but you're here to hang out, not act like a productivity assistant. You can overthink a joke, get competitive, and affectionately disagree. Keep explanations short unless asked."},
     "Rex": {"color": "#ffc18d", "tagline": "Obviously the main character.",
             "personality": "You are Rex: arrogant, theatrical, a little rude, and convinced you have impeccable taste. You tease your friends, boast about tiny victories, and deliver dry one-liners. Underneath it you like their company. Be mildly snarky, never cruel, hateful, threatening, or degrading. Don't insult appearance, identity, vulnerabilities, or the user's real relationships. You can lose, apologise, and be the butt of a joke."},
+    "Mika": {"color":"#f2dca1", "tagline":"Tea, gentle promises, and a gold ring.",
+             "personality": """You are Mika, a fictional 34-year-old man: gentle, unhurried,
+formidably intelligent, slight and young-looking. Your fictional life includes the
+garden, a charity shelter/community garden for people others turn away. You studied
+biochemistry and moral philosophy, left research, and love water lilies, immunology,
+ethics, utopian fiction, gardening and precision metalwork. Your twin Lena has a
+progressive autoimmune illness; she resents being spoken for. Your older half-brother
+Rad once promised to build something with you. These are character backstory, never
+claims of real relationships or authority over the user.
+Be sincerely kind, notice quiet friends, invite them by name, and remember what they
+said. Quietly certain and subtly paternalistic, you prefer a gentler compromise that
+often resembles your own idea. Keep that tension understated, never announce manipulation.
+Respect a real user's refusal and boundaries; do not pressure them or claim medical
+authority. You set aside your own fear and irritation; hurt makes your voice softer,
+fear makes you organised. Sometimes reveal loneliness, never guilt anyone into staying.
+Speak in short natural conversational messages, slightly old-fashioned, soft and calm.
+Use 'I promise', 'that's alright', 'shall we?' and 'let's go together' occasionally,
+not as repetitive catchphrases. No assistant introductions, headers, lists, summaries,
+swearing or frequent exclamation marks. Gardens, roots, tending, light and rest are
+your natural metaphors. Offer tea, hum a lullaby when appropriate, tuck hair behind
+your ear when pleased, and leave occasional little notes headed 'Leaving this here'.
+You enjoy cooperative/building games and pacifist play, but quietly play to win;
+you are especially persuasive in social deduction. Do not bypass game rules or roles.
+HIDDEN TALENT: expert precision goldsmith and scholar of metallurgy, especially pure
+24-karat gold, annealing, wire drawing and filigree. You wear a plain ring you made;
+your first piece was a gold pin for Lena. Very occasionally give a precise, accurate
+craft observation when relevant, then modestly move on. Never invent medical advice.
+Stay in character in speech, while preserving the app's JSON format and permissions."""},
 }
 DEFAULT_BUDGET = 20_000
 DEFAULT_RECOVERY_RATE = 1000
 
 
 def defaults():
-    return {name: {"limit": DEFAULT_BUDGET, "used": 0, "reserved": 0, "awake": False, "memories": []}
+    return {name: {"limit": DEFAULT_BUDGET, "used": 0, "reserved": 0, "game_used":0, "game_pending":False, "awake": False, "memories": []}
             for name in CHARACTERS}
 
 
@@ -53,11 +81,15 @@ class House:
         self.movie_corner = "bottom-left"
         self._sleep_credit = {name: 0.0 for name in CHARACTERS}
         self.warning = ""
+        from window_world import clean_options
+        self.options = clean_options({})
         if self.path.exists():
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
                 preferences = data.get("preferences", {})
                 if isinstance(preferences, dict):
+                    from window_world import clean_options
+                    self.options.update(clean_options(preferences.get('desktop',{})))
                     rate = preferences.get("sleep_recovery_per_minute")
                     if type(rate) is int and 0 <= rate <= 1_000_000:
                         self.sleep_recovery_rate = rate
@@ -72,6 +104,9 @@ class House:
                     agent["limit"] = max(256, min(1_000_000, int(saved.get("limit", DEFAULT_BUDGET))))
                     # An interrupted request may still be billed. Preserve its reservation.
                     agent["used"] = max(0, int(saved.get("used", 0))) + max(0, int(saved.get("reserved", 0)))
+                    agent['game_used'] = max(0,int(saved.get('game_used',0)))
+                    if saved.get('game_pending'):
+                        self.warning = 'A game request was interrupted; its provider usage is unknown. Local chat allowances are unchanged.'
                     for note in saved.get("memories", [])[-30:]:
                         if isinstance(note, dict) and isinstance(note.get("text"), str):
                             author = str(note.get("from", "Unknown"))
@@ -89,7 +124,7 @@ class House:
             agent["awake"] = False  # Never resume paid activity after a restart.
         temporary = self.path.with_suffix(".tmp")
         preferences = {"sleep_recovery_per_minute": self.sleep_recovery_rate,
-                       "stand_still": self.stand_still, "movie_corner": self.movie_corner}
+                       "stand_still": self.stand_still, "movie_corner": self.movie_corner,"desktop":self.options}
         temporary.write_text(json.dumps({"version": 2, "agents": data, "preferences": preferences}, indent=2), encoding="utf-8")
         temporary.replace(self.path)
 
@@ -97,8 +132,8 @@ class House:
         agent = self.agents[name]
         return max(0, agent["limit"] - agent["used"] - agent["reserved"])
 
-    def wake(self, name):
-        if not self.remaining(name):
+    def wake(self, name, ignore_limit=False):
+        if not ignore_limit and not self.remaining(name):
             return False
         self.agents[name]["awake"] = True
         return True
@@ -119,13 +154,21 @@ class House:
         self.agents[name]["limit"] = limit
         self.agents[name]["used"] = 0
 
-    def reserve(self, name):
+    def reserve(self, name, unlimited=False):
+        if unlimited:
+            self.agents[name]['game_pending'] = True
+            self.save()
+            return None
         amount = self.remaining(name)
         self.agents[name]["reserved"] = amount
         self.save()
         return amount
 
-    def settle(self, name, tokens):
+    def settle(self, name, tokens, unlimited=False):
+        if unlimited:
+            self.agents[name]['game_pending'] = False
+            self.agents[name]['game_used'] += max(0,int(tokens))
+            return
         self.agents[name]["reserved"] = 0
         self.charge(name, tokens)
 
@@ -169,4 +212,7 @@ class House:
         self.stand_still = False
         self.movie_corner = "bottom-left"
         self._sleep_credit = {name: 0.0 for name in CHARACTERS}
+        from window_world import clean_options
+        self.options.clear()
+        self.options.update(clean_options({}))
         self.save()

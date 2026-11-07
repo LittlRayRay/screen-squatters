@@ -68,6 +68,9 @@ class Resident:
     held_until: float = 0
     pending_speech: str = ""
     wake_threshold: int = 1000
+    vx: float = 0
+    vy: float = 0
+    spin: float = 0
 
 
 class World:
@@ -81,6 +84,9 @@ class World:
         self.movement_enabled = True
         self.movie_enabled = False
         self.movie_corner = "bottom-left"
+        self.physics_enabled = True
+        self.gravity = 900
+        self.bounce = .62
         self.residents = {name: Resident(*self.home, wake_at=now+self.rng.uniform(45, 120)) for name in names}
 
     def constrain(self, x, y):
@@ -94,6 +100,7 @@ class World:
 
     def wake(self, name, now):
         resident = self.residents[name]
+        resident.vx = resident.vy = 0
         if resident.mode == "home":
             resident.x, resident.y = self.constrain(*self.home)
         resident.mode = "walking"
@@ -109,6 +116,7 @@ class World:
 
     def rest(self, name, now, immediate=False):
         resident = self.residents[name]
+        resident.vx = resident.vy = 0
         resident.mode = "home" if immediate or not self.movement_enabled or resident.mode == "home" else "returning"
         resident.goal = self.constrain(*self.home)
         resident.wake_at = now+self.rng.uniform(90, 210)
@@ -121,6 +129,7 @@ class World:
         if not enabled:
             return
         for resident in self.residents.values():
+            resident.vx = resident.vy = 0
             resident.gaze = resident.interest = None
             resident.goal = None
             if resident.mode == "returning":
@@ -140,6 +149,7 @@ class World:
 
     def seat(self, name, now, immediate=False):
         resident = self.residents[name]
+        resident.vx = resident.vy = 0
         resident.goal = self.seat_goal(name)
         resident.mode = "seated" if immediate else "settling"
         if immediate:
@@ -184,24 +194,89 @@ class World:
                 events.append(("wake", name))
         return events
 
+    def throw(self,name,vx,vy,now):
+        resident = self.residents[name]
+        if not self.physics_enabled or not self.movement_enabled or self.movie_enabled or resident.mode in ('home','seated','returning'):
+            return
+        resident.mode,resident.goal = 'airborne',None
+        resident.vx,resident.vy = clamp(vx,-1400,1400),clamp(vy,-1400,1400)
+        resident.interest = resident.gaze = None
+        resident.held_until = 0
+        resident.next_wander = now+20
+
+    def collide(self,now):
+        names = list(self.residents)
+        excluded = {'home','returning','seated','settling','interested'}
+        for i,name in enumerate(names):
+            a = self.residents[name]
+            if a.mode in excluded or a.held_until > now:
+                continue
+            for other in names[i+1:]:
+                b = self.residents[other]
+                if b.mode in excluded or b.held_until > now:
+                    continue
+                dx,dy = b.x-a.x,b.y-a.y
+                distance = math.hypot(dx,dy)
+                if distance >= 59:
+                    continue
+                nx,ny = (dx/distance,dy/distance) if distance > .001 else (1,0)
+                overlap = (59-distance)/2
+                a.x,a.y = self.constrain(a.x-nx*overlap,a.y-ny*overlap)
+                b.x,b.y = self.constrain(b.x+nx*overlap,b.y+ny*overlap)
+                approach = (b.vx-a.vx)*nx+(b.vy-a.vy)*ny
+                if approach < 0:
+                    impulse = -(1+self.bounce)*approach/2
+                    a.vx,a.vy = a.vx-impulse*nx,a.vy-impulse*ny
+                    b.vx,b.vy = b.vx+impulse*nx,b.vy+impulse*ny
+                    for resident in (a,b):
+                        if math.hypot(resident.vx,resident.vy)>30 and resident.mode != 'sparring':
+                            resident.mode,resident.goal = 'airborne',None
+
     def step(self, dt, now, autonomous=True):
+        dt = clamp(dt,0,.15)
+        steps = max(1,math.ceil(dt/.012)) if self.physics_enabled and any(r.mode=='airborne' for r in self.residents.values()) else 1
+        arrived = []
+        for index in range(steps):
+            arrived.extend(self._step(dt/steps,now-dt+(index+1)*dt/steps,autonomous))
+        return list(dict.fromkeys(arrived))
+
+    def _step(self, dt, now, autonomous=True):
         arrived = []
         dt = clamp(dt, 0, .15)
         for name, resident in self.residents.items():
             if resident.mode == "home" or now < resident.held_until:
+                continue
+            if resident.mode == 'airborne':
+                if not self.movement_enabled or not self.physics_enabled:
+                    resident.mode,resident.vx,resident.vy = 'idle',0,0
+                    continue
+                resident.vy = min(1600,resident.vy+self.gravity*dt)
+                nx,ny = resident.x+resident.vx*dt,resident.y+resident.vy*dt
+                resident.x,resident.y = self.constrain(nx,ny)
+                if resident.x != nx:
+                    resident.vx *= -self.bounce
+                if resident.y != ny:
+                    resident.vy *= -self.bounce
+                    resident.vx *= .78
+                    if abs(resident.vy)<45:
+                        resident.vy = 0
+                        if abs(resident.vx)<25:
+                            resident.mode,resident.vx = 'idle',0
+                resident.vx *= math.exp(-.3*dt)
+                resident.spin += resident.vx*dt*.12
                 continue
             if resident.mode == "idle" and self.movement_enabled and autonomous and not self.paused and not self.movie_enabled and now >= resident.next_wander:
                 resident.goal, resident.mode = self.destination(), "walking"
                 resident.next_wander = now+self.rng.uniform(20, 45)
             if resident.mode == "interested" and now >= resident.interest_until:
                 resident.mode, resident.interest, resident.gaze = "idle", None, None
-            if not self.movement_enabled or resident.mode not in {"walking", "returning", "approaching", "settling"} or not resident.goal:
+            if not self.movement_enabled or resident.mode not in {"walking", "returning", "approaching", "settling", "sparring"} or not resident.goal:
                 continue
-            if not autonomous and resident.mode not in {"returning", "settling"}:
+            if not autonomous and resident.mode not in {"returning", "settling", "sparring"}:
                 continue
             dx, dy = resident.goal[0]-resident.x, resident.goal[1]-resident.y
             distance = math.hypot(dx, dy)
-            speed = 240 if resident.mode in {"returning", "settling"} else 180 if resident.mode == "approaching" else 65
+            speed = 240 if resident.mode in {"returning", "settling"} else 180 if resident.mode in {"approaching","sparring"} else 65
             if distance <= max(2, speed*dt):
                 resident.x, resident.y = resident.goal
                 resident.mode = {"returning": "home", "approaching": "interested", "settling": "seated"}.get(resident.mode, "idle")
@@ -210,4 +285,6 @@ class World:
                 arrived.append(name)
             else:
                 resident.x, resident.y = self.constrain(resident.x+dx/distance*speed*dt, resident.y+dy/distance*speed*dt)
+        if self.physics_enabled and self.movement_enabled:
+            self.collide(now)
         return arrived

@@ -11,14 +11,16 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ai import Turn
 from desktop import ScreenSquatters
-from games import Mafia
+from games import Mafia, Debate
 from poker import Poker
+from house import CHARACTERS
 from screen import _libraries, capture_window
 
 temporary = tempfile.TemporaryDirectory()
 root = tk.Tk()
 app = ScreenSquatters(root, data_dir=temporary.name, port=0, timers=False)
 app.key = "test-only"
+app.house.options["window_awareness"] = False
 
 def pump():
     for _ in range(12):
@@ -35,8 +37,11 @@ try:
     assert root.overrideredirect()
     assert not app.chat.winfo_viewable(), "Only the house should open at launch"
     assert not app.habitat.open
+    assert root.winfo_width() == 160, 'The closed house should be compact'
     app.habitat.tap(180, 200)
     assert app.habitat.open
+    pump()
+    assert root.winfo_width() == 360, 'Clicking expands the house'
     app.habitat.tap(85, 160)
     assert app.house.agents['Burt']['awake']
     app.show_chat()
@@ -48,10 +53,10 @@ try:
         if not app.house.agents[name]['awake']:
             app.toggle(name)
     pump()
-    assert len(app.awake()) == 3
+    assert len(app.awake()) == len(CHARACTERS)
     assert all(win.winfo_viewable() for win, _canvas in app.floaters.values())
     locations = [(win.winfo_x(), win.winfo_y()) for win, _ in app.floaters.values()]
-    assert len(set(locations)) == 3, f"Floating characters overlap at startup: {locations}"
+    assert len(set(locations)) == len(CHARACTERS), f"Floating characters overlap at startup: {locations}"
     app.inbox.put({"title": "Controlled test", "url": "https://example.com/", "text": "A test page.", "automatic": False})
     pump()
     assert "Controlled test" in app.context_status.get()
@@ -90,7 +95,7 @@ try:
     pump()
     assert app.movie_mode.get() and app.world.movie_enabled
     assert all(r.mode == 'seated' for r in app.world.residents.values())
-    assert len(set((r.x,r.y) for r in app.world.residents.values())) == 3
+    assert len(set((r.x,r.y) for r in app.world.residents.values())) == len(CHARACTERS)
     assert not app.screen_enabled.get(), 'Movie mode must not silently enable screenshots'
     before = [(r.x,r.y) for r in app.world.residents.values()]
     app.apply_intent('Burt', Turn(activity='wander'))
@@ -147,6 +152,13 @@ try:
         pump()
     assert "Burt" in app.game.spoken
     finish_speech()
+    previous_mood = app.social.moods['Burt']
+    app.game.mafia,app.game.phase = 'Burt','night'
+    with patch('desktop.companion_turn',return_value=Turn(speech='PRIVATE NIGHT SPEECH',emotion='angry',vote='You',used=1)):
+        app.request_turn('Burt','Secret night action')
+        pump()
+    assert app.social.moods['Burt'] == previous_mood, 'Private Mafia actions must not leak through public mood animations'
+    assert 'PRIVATE NIGHT SPEECH' not in app.transcript.get('1.0','end')
     app.cancel_game()
     # Poker uses the shared table, private hands, voluntary reveals and paced AI turns.
     app.start_poker()
@@ -156,9 +168,14 @@ try:
     with patch('desktop.companion_turn',return_value=Turn(speech='Fine, I call.',used=100,poker_action='call',reveal_cards=True)):
         app.request_turn('Rex','Play poker')
         pump()
+    assert app.game.actor == 'Mika'
+    finish_speech()
+    with patch('desktop.companion_turn',return_value=Turn(used=100,poker_action='call')):
+        app.request_turn('Mika','Play poker')
+        pump()
     assert app.game.actor == 'You'
     assert app.game.view('Burt')['shown_cards'] == {'Rex':app.game.hands['Rex']}
-    assert app.speech_pending(), 'The next AI turn waits for the current visible reply'
+    assert not app.busy, 'Poker AI turn finishes before the user acts'
     app.poker_table.reveal_on_action.set(True)
     app.poker_table.action('call')
     assert 'You' in app.game.revealed
@@ -178,11 +195,50 @@ try:
     app.render_game()
     dealer = app.game.dealer
     app.next_poker_hand()
-    assert app.game.dealer == (dealer+1)%4 and not app.game.revealed
+    assert app.game.dealer == (dealer+1)%len(app.game.players) and not app.game.revealed
     app.cancel_game()
     pump()
     assert app.poker_table is None
     assert all(win.winfo_viewable() for win,_ in app.floaters.values())
+    # Games still run after the local chat allowance is spent, and record separate usage.
+    app.house.agents['Burt']['used'] = app.house.agents['Burt']['limit']
+    app.house.sleep('Burt')
+    app.world.rest('Burt',time.monotonic(),immediate=True)
+    app.start_ttt('You','Burt')
+    assert app.house.agents['Burt']['awake']
+    app.game_action(0)
+    def unlimited_turn(*args):
+        assert args[7] is None, 'Game calls must bypass the local remaining-token allowance'
+        return Turn(used=30000,move=4)
+    with patch('desktop.companion_turn',side_effect=unlimited_turn):
+        app.request_turn('Burt','Play past local allowance')
+        pump()
+    assert app.game.board[4] == 'O'
+    assert app.house.agents['Burt']['used'] == app.house.agents['Burt']['limit']
+    assert app.house.agents['Burt']['game_used'] >= 30000
+    app.cancel_game()
+    assert not app.house.agents['Burt']['awake'], 'Chat limits resume after leaving the game'
+    with patch('desktop.simpledialog.askstring',return_value='Should we plant a garden?'):
+        app.start_debate()
+    assert isinstance(app.game,Debate) and len(app.game.players) == 5
+    app.show_chat()
+    assert app.recipient.get() == 'Everyone'
+    app.question.insert(0,'I think we should grow vegetables.')
+    app.send()
+    assert app.game.actor == 'Burt'
+    with patch('desktop.companion_turn',return_value=Turn(speech='Umm, what vegetables?',used=100)):
+        app.request_turn('Burt','Debate')
+        pump()
+    assert app.game.actor == 'Byte'
+    finish_speech()
+    app.cancel_game()
+    app.house.recharge('Burt',20000)
+    app.toggle('Burt')
+    app.show_chat('Mika')
+    app.question.insert(0,'Hello, Mika.')
+    app.send()
+    assert list(app.pending) == ['Mika']
+    app.pending.clear()
     app.show_settings()
     pump()
     assert app.settings.winfo_viewable()
@@ -193,6 +249,12 @@ try:
         toggle = app.cards[name]['toggle']
         assert toggle.winfo_viewable()
         assert toggle.winfo_rooty()+toggle.winfo_height() <= app.settings.winfo_rooty()+app.settings.winfo_height()
+    notebook.select(3)
+    pump()
+    assert notebook.tab(3,'text') == 'Windows'
+    notebook.select(4)
+    pump()
+    assert notebook.tab(4,'text') == 'Social & physics'
     app.settings.destroy()
     # Test native PNG capture ONLY if our controlled test window is foreground.
     if os.name == "nt":
@@ -238,7 +300,7 @@ try:
     app.handle_turn(old_generation, 0, "Burt", Turn(speech="STALE REPLY", used=500))
     assert "STALE REPLY" not in app.transcript.get("1.0", "end")
     assert app.house.agents["Burt"]["used"] == 0
-    print("UI smoke passed: house/cutaway, sleep recovery, stand still, movie mode, screen interests, paced speech, shared memory, poker table/actions/reveals/redeal, other games, pause and reset.")
+    print("UI smoke passed: compact/expanded house, four housemates, directed/group chat, debate, unlimited game turns, separate usage, poker/reveals/redeal, Windows/social settings, movie mode, paced speech, pause and reset.")
 finally:
     app.quit()
     temporary.cleanup()

@@ -73,6 +73,7 @@ def main():
         app = ScreenSquatters(root,data_dir=directory,port=0,timers=False)
         try:
             app.key = 'fixture-only'
+            app.house.options['window_awareness'] = False
             app.stand_still.set(True)
             app.stand_still_changed()
             app.start_poker()
@@ -90,15 +91,44 @@ def main():
                 win.withdraw()
             preview = tk.Toplevel(root)
             preview.title('Screen Squatters | animation preview')
-            preview.geometry('620x320')
-            canvas = tk.Canvas(preview,width=620,height=320,bg='#171923',highlightthickness=0)
+            preview.geometry('820x320')
+            canvas = tk.Canvas(preview,width=820,height=320,bg='#171923',highlightthickness=0)
             canvas.pack()
-            for name,x in [('Burt',105),('Byte',310),('Rex',515)]:
+            for name,x in [('Burt',105),('Byte',310),('Rex',515),('Mika',720)]:
                 draw_friend(canvas,name,x,215,1.1,phase=25,walking=name=='Byte',talking=name=='Burt')
                 canvas.create_text(x,288,text=name,fill='#f1edff',font=('Segoe UI',11,'bold'))
             speech_bubble(canvas,'Burt','Umm, wait, do I put these cards down now?',x=15,y=24,width=180)
             speech_bubble(canvas,'Rex','',x=425,y=24,width=180,color='#ffc18d',typing=True,phase=25)
             snapshot(preview,local/'speech-preview.png')
+            preview.destroy()
+            gallery = tk.Toplevel(root)
+            gallery.title('Screen Squatters | compact and expanded house')
+            gallery.configure(bg='#171923')
+            gallery.geometry('620x390')
+            tk.Label(gallery,text='click the small house to enter',bg='#171923',fg='#f1edff',font=('Segoe UI',13)).pack(pady=12)
+            row = tk.Frame(gallery,bg='#171923')
+            row.pack()
+            for resident in app.world.residents.values():
+                resident.mode = 'home'
+            original_canvas,original_reveal = app.habitat.canvas,app.habitat.reveal
+            for opened in (False,True):
+                panel = tk.Canvas(row,width=360 if opened else 160,height=320 if opened else 143,bg='#171923',highlightthickness=0)
+                panel.pack(side='left',padx=10)
+                app.habitat.canvas = panel
+                app.habitat.reveal = 1 if opened else 0
+                app.habitat.draw_house()
+                if not opened:
+                    panel.scale('all',0,0,160/360,160/360)
+            app.habitat.canvas,app.habitat.reveal = original_canvas,original_reveal
+            snapshot(gallery,local/'house-preview.png')
+            gallery.destroy()
+            app.house.options['window_awareness'] = True
+            app.windows.update([{'hwnd':0,'pid':0,'started':0,'path':'c:\\fixtures\\editor.exe','app':'editor.exe',
+                                 'title':'Example document (fixture)','class':'Fixture','rect':[100,100,600,500],
+                                 'work':[0,0,1600,900],'state':'normal','foreground':False,'movable':False,'resizable':False}])
+            app.show_settings()
+            app.settings.winfo_children()[0].select(3)
+            snapshot(app.settings,local/'windows-settings-preview.png')
         finally:
             app.quit()
 

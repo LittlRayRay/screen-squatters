@@ -39,10 +39,10 @@ class Poker:
     kind = 'Poker'
 
     def __init__(self, players, rng=None, dealer=0):
-        if len(players) != 4 or len(set(players)) != 4:
-            raise ValueError('Poker needs you and all three housemates')
+        if not 4 <= len(players) <= 6 or len(set(players)) != len(players):
+            raise ValueError('Poker needs four to six different players')
         self.players = list(players)
-        self.dealer = dealer % 4
+        self.dealer = dealer % len(players)
         self.deck = [rank+suit for rank in '23456789TJQKA' for suit in 'CDHS']
         (rng or random.SystemRandom()).shuffle(self.deck)
         self.hands = {p: [] for p in players}
@@ -67,7 +67,7 @@ class Poker:
         self.pending = self.clockwise(self.players.index(big))
 
     def clockwise(self, after):
-        return [self.players[(after+i) % 4] for i in range(1, 5)]
+        return [self.players[(after+i) % len(self.players)] for i in range(1,len(self.players)+1)]
 
     @property
     def actor(self):

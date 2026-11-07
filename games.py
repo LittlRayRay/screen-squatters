@@ -41,15 +41,15 @@ class Mafia:
     kind = "Mafia"
 
     def __init__(self, players, rng=None):
-        if len(players) != 4 or len(set(players)) != 4:
-            raise ValueError("Mafia needs you and all three housemates")
+        if not 4 <= len(players) <= 8 or len(set(players)) != len(players):
+            raise ValueError("Mafia needs four to eight different players")
         self.players = list(players)
         self.alive = list(players)
         self.mafia = (rng or random).choice(players)
         self.phase = "discussion"
         self.spoken = []
         self.votes = {}
-        self.events = ["Day 1: one secret mafia, three townsfolk. Discuss, then everyone votes. Ties spare everyone. At night the mafia eliminates one player."]
+        self.events = [f"Day 1: one secret mafia, {len(players)-1} townsfolk. Discuss, then everyone votes. Ties spare everyone. At night the mafia eliminates one player."]
         self.result = ""
         self.day = 1
 
@@ -113,3 +113,41 @@ class Mafia:
                 "events": self.events[-6:], "votes": dict(self.votes) if self.phase != "night" else {},
                 "targets": [p for p in self.alive if p != actor], "result": self.result,
                 "rule": "Don't reveal your secret role. In discussion, just speak. When voting/night, put the chosen target in vote. Night speech is private and will not be shown."}
+
+
+class Debate:
+    kind = 'Debate'
+
+    def __init__(self, players, topic, rounds=3):
+        self.players = list(players)
+        self.topic = topic[:300]
+        self.rounds = rounds
+        self.round = 1
+        self.index = 0
+        self.events = []
+        self.result = ''
+
+    @property
+    def actor(self):
+        return None if self.result else self.players[self.index]
+
+    def act(self, actor, text=''):
+        if actor != self.actor or self.result:
+            raise ValueError('Wait for your debate turn')
+        self.events.append(actor+': '+(text.strip()[:1200] or 'Pass.'))
+        self.index += 1
+        if self.index == len(self.players):
+            self.index = 0
+            if self.round == self.rounds:
+                self.result = 'Debate finished: '+self.topic
+            else:
+                self.round += 1
+
+    def view(self, actor):
+        stances = ['your own view','ask literal questions','make the strongest case for','challenge the strongest case','seek common ground']
+        return {'game':self.kind,'topic':self.topic,'round':self.round,'rounds':self.rounds,
+                'turn':self.actor,'your_approach':stances[self.players.index(actor)%len(stances)],
+                'arguments':self.events[-8:],'result':self.result,
+                'rule':'Debate this topic in character. Address one specific recent argument, add one new reason or question, '
+                       'and leave room for the user. Disagree with ideas, not identities. Do not invent evidence. '
+                       'No votes or board moves; your speech is your debate contribution.'}

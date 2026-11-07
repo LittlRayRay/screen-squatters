@@ -27,11 +27,12 @@ class Habitat:
         if os.name == "nt":
             root.wm_attributes("-transparentcolor", TRANSPARENT)
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-        root.geometry(f"360x320+{max(0, sw-405)}+{max(0,sh-390)}")
+        root.geometry(f"160x143+{max(0, sw-190)}+{max(0,sh-210)}")
         root.minsize(1, 1)
-        self.canvas = tk.Canvas(root, width=360, height=320, bg=TRANSPARENT, highlightthickness=0, cursor="hand2")
+        self.canvas = tk.Canvas(root, width=160, height=143, bg=TRANSPARENT, highlightthickness=0, cursor="hand2")
         self.canvas.pack()
-        self.open = False
+        self._open = False
+        self.width,self.height,self.view_scale = 160,143,160/360
         self.reveal = 0
         self.hover = False
         self.dragged = False
@@ -55,7 +56,25 @@ class Habitat:
         self.last_frame = time.monotonic()
 
     def home_point(self):
-        return self.app.root.winfo_x()+85, self.app.root.winfo_y()+60
+        return self.app.root.winfo_x()+85*self.view_scale, self.app.root.winfo_y()+60*self.view_scale
+
+    @property
+    def open(self):
+        return self._open
+
+    @open.setter
+    def open(self,value):
+        value = bool(value)
+        if value == self._open:
+            return
+        root = self.app.root
+        width,height = (360,320) if value else (160,143)
+        x = max(0,min(root.winfo_screenwidth()-width,root.winfo_x()+self.width-width))
+        y = max(0,min(root.winfo_screenheight()-height-45,root.winfo_y()+self.height-height))
+        self._open = value
+        self.width,self.height,self.view_scale = width,height,width/360
+        self.canvas.configure(width=width,height=height)
+        root.geometry(f'{width}x{height}+{x}+{y}')
 
     def press(self, event):
         root = self.app.root
@@ -75,7 +94,7 @@ class Habitat:
     def release(self, event):
         if self.dragged:
             return
-        self.tap(event.x, event.y)
+        self.tap(event.x/self.view_scale, event.y/self.view_scale)
 
     def tap(self, x, y):
         if not self.open:
@@ -83,7 +102,8 @@ class Habitat:
         elif y < 104:
             self.open = False
         elif 110 <= y <= 223 and 43 <= x <= 317:
-            name = list(CHARACTERS)[min(2, int((x-43)/92))]
+            names = list(CHARACTERS)
+            name = names[min(len(names)-1,int((x-43)/(274/len(names))))]
             self.app.toggle(name)
         elif 225 <= y <= 278:
             self.app.show_chat()
@@ -105,6 +125,7 @@ class Habitat:
         games.add_command(label="Tic-tac-toe", command=app.choose_ttt)
         games.add_command(label="Mafia", command=app.start_mafia)
         games.add_command(label="Poker night", command=app.start_poker)
+        games.add_command(label="Debate a topic", command=app.start_debate)
         menu.add_cascade(label="Play a game", menu=games)
         menu.add_separator()
         menu.add_command(label="Settings & memories", command=app.show_settings)
@@ -142,6 +163,10 @@ class Habitat:
         app.button(header, "Settings", app.show_settings).pack(side="right")
         footer = tk.Frame(win, bg=BG)
         footer.pack(side="bottom", fill="x", padx=16, pady=(4, 12))
+        audience = tk.Frame(footer,bg=BG)
+        audience.pack(fill='x',pady=3)
+        tk.Label(audience,text='To',bg=BG,fg=MUTED).pack(side='left',padx=(0,8))
+        tk.OptionMenu(audience,app.recipient,'Everyone',*CHARACTERS).pack(side='left')
         compose = tk.Frame(footer, bg=BG)
         compose.pack(fill="x", pady=6)
         app.question = tk.Entry(compose, bg=PANEL, fg=FG, insertbackground=FG, relief="flat", font=("Segoe UI", 11))
@@ -191,20 +216,21 @@ class Habitat:
         c.create_rectangle(274, 37, 299, 93, fill="#ae7d72", outline="#dca792", width=2)
         c.create_rectangle(270, 34, 303, 42, fill="#e8c1a5", outline="")
         c.create_rectangle(36, 101, 324, 279, fill="#e5c7a1", outline="#6d5260", width=3)
+        room_width = 274/len(CHARACTERS)
         for i, name in enumerate(CHARACTERS):
-            x = 43+i*92
-            c.create_rectangle(x, 111, x+90, 218, fill=("#514760", "#3d5b60", "#68524e")[i], outline="#ddbc95", width=2)
+            x = 43+i*room_width
+            c.create_rectangle(x, 111, x+room_width-2, 218, fill=("#514760", "#3d5b60", "#68524e", "#60604a")[i], outline="#ddbc95", width=2)
             for py in (128, 153, 178):
-                c.create_text(x+76, py, text="·", fill="#84718b", font=("Segoe UI", 14))
-            c.create_rectangle(x+10, 176, x+79, 200, fill="#8a6b75", outline="#b18c8a", width=2)
+                c.create_text(x+room_width-12, py, text="·", fill="#84718b", font=("Segoe UI", 14))
+            c.create_rectangle(x+8, 176, x+room_width-8, 200, fill="#8a6b75", outline="#b18c8a", width=2)
             c.create_rectangle(x+12, 178, x+34, 192, fill="#eee0cb", outline="")
-            c.create_line(x+12, 201, x+12, 210, x+76, 210, x+76, 201, fill="#b18c8a", width=3)
+            c.create_line(x+12, 201, x+12, 210, x+room_width-12, 210, x+room_width-12, 201, fill="#b18c8a", width=3)
             resident = self.world.residents[name]
             if resident.mode == "home":
-                self.paint(c, name, x+46, 157, .55, True, app.frame)
+                self.paint(c, name, x+room_width/2, 157, .55, True, app.frame)
             else:
-                c.create_text(x+46, 155, text="watching a movie" if app.movie_mode.get() else "out exploring", fill="#d3c0c1", font=("Segoe UI", 7))
-            c.create_text(x+45, 123, text=name, fill=CHARACTERS[name]["color"], font=("Segoe UI", 9, "bold"))
+                c.create_text(x+room_width/2, 155, text="watching" if app.movie_mode.get() else "out", fill="#d3c0c1", font=("Segoe UI", 7))
+            c.create_text(x+room_width/2, 123, text=name, fill=CHARACTERS[name]["color"], font=("Segoe UI", 9, "bold"))
         # A tiny living room: the sofa is the conversation entry point.
         c.create_oval(73, 254, 272, 273, fill="#b48c79", outline="")
         c.create_rectangle(83, 228, 167, 259, fill="#718b8c", outline="#4b6167", width=2)
@@ -236,7 +262,7 @@ class Habitat:
         if capture or browser:
             c.create_text(291, 301, text="screen on" if capture else "browser on", fill="#f6d99d", font=("Segoe UI", 8))
         if self.hover:
-            c.create_text(158, 304, text="tap a housemate · roof to close" if self.open else "click to enter · right-click for more",
+            c.create_text(158, 304, text="tap a housemate · roof to close" if self.open else "click to enter",
                           fill="#dcc8b6", font=("Segoe UI", 8))
 
     def marker(self, name, resident):
@@ -287,6 +313,8 @@ class Habitat:
                 app.bubbles[name] = (resident.pending_speech, now+18)
                 resident.pending_speech = ""
         self.draw_house()
+        if self.view_scale != 1:
+            self.canvas.scale('all',0,0,self.view_scale,self.view_scale)
         for name, (win, canvas) in app.floaters.items():
             resident = self.world.residents[name]
             if poker:
@@ -313,6 +341,7 @@ class Habitat:
                 distance = max(1, math.hypot(dx, dy))
                 gaze = (dx/distance, dy/distance)
             self.paint(canvas, name, 95, 165, .95, False, app.frame+list(CHARACTERS).index(name)*17, gaze=gaze,talking=talking,
-                       pointing=resident.mode == "interested", walking=resident.mode in {"walking", "returning", "approaching", "settling"},
+                       roll=resident.spin,emotion=app.social.moods[name],scuffling=name in app.social.scuffles,
+                       pointing=resident.mode == "interested", walking=resident.mode in {"walking", "returning", "approaching", "settling", "sparring"},
                        seated=resident.mode == "seated")
             self.marker(name, resident)

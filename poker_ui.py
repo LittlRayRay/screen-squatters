@@ -89,6 +89,10 @@ class PokerTable:
         for i in range(len(game.board),5):
             rounded(c,250+i*45,207,290+i*45,263,radius=5,outline='#427d6e',fill='#245c52')
         seats = {'You':(360,325,320,300),'Burt':(72,190,150,150),'Byte':(360,54,327,108),'Rex':(648,190,500,150)}
+        if len(game.players) == 5:
+            seats.update(Burt=(72,190,155,183),Byte=(240,48,207,125),Rex=(480,48,447,125),Mika=(648,190,500,183))
+        latest = app.busy_name or max((name for name in CHARACTERS if app.bubble_state(name)[0]),
+                                     key=lambda name:app.speech_lines[name].start,default=None)
         for player in game.players:
             x,y,cx,cy = seats[player]
             color = CHARACTERS[player]['color'] if player in CHARACTERS else '#f1edff'
@@ -107,8 +111,8 @@ class PokerTable:
             self.cards(cards,cx,cy,small=True)
             if player in CHARACTERS:
                 text,typing,_speaking = app.bubble_state(player)
-                if text or typing:
-                    bx,by = {'Burt':(3,3),'Byte':(462,3),'Rex':(537,267)}[player]
+                if (text or typing) and (len(game.players) == 4 or player == latest):
+                    bx,by = (275,0) if len(game.players) == 5 else {'Burt':(3,3),'Byte':(462,3),'Rex':(537,267)}[player]
                     speech_bubble(c,player,text,bx,by,width=175,color=color,typing=typing,phase=app.frame)
         c.create_text(360,400,text='Cards stay hidden unless their owner chooses to show them.',fill=MUTED,font=('Segoe UI',8))
         if self.canvas_height != 410:

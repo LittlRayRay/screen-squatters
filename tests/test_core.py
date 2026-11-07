@@ -277,7 +277,7 @@ class HouseTests(unittest.TestCase):
             'Byte': {'memories': [{'from': 'Pip', 'text': 'Pip won once.', 'time': 'old'}]}
         }}), encoding='utf-8')
         migrated = House(self.path)
-        self.assertEqual(set(migrated.agents), {'Burt', 'Byte', 'Rex'})
+        self.assertEqual(set(migrated.agents), {'Burt', 'Byte', 'Rex', 'Mika'})
         self.assertEqual(migrated.agents['Burt']['limit'], 30000)
         self.assertEqual(migrated.agents['Burt']['used'], 1900)
         self.assertFalse(migrated.agents['Burt']['awake'])
