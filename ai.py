@@ -40,6 +40,27 @@ class Turn:
     exhausted: bool = False
 
 
+class GeminiAPIError(RuntimeError):
+    """A failed HTTP request, with explicit usage uncertainty for accounting."""
+    def __init__(self, code):
+        self.code = code
+        self.usage_unknown = code >= 500 or code == 408
+        messages = {
+            400: "Gemini request rejected (HTTP 400). Check your API key and the model's JSON, vision and thinking support.",
+            401: "Gemini API key rejected (HTTP 401). Check Settings.",
+            402: "Gemini billing error (HTTP 402): prepaid API credits are depleted. Open Google AI Studio > Projects > Billing to add credits, then try again. This rejected request used no local token allowance.",
+            403: "Gemini access denied (HTTP 403). Check your API key, API restrictions and model access.",
+            404: "Gemini model unavailable (HTTP 404). Choose a supported model in Settings.",
+            408: "Gemini request timed out (HTTP 408).",
+            429: "Gemini API quota or rate limit reached (HTTP 429). Check your API quota or wait before trying again.",
+            500: "Gemini internal server error (HTTP 500). Try again later.",
+            502: "Gemini gateway error (HTTP 502). Try again later.",
+            503: "Gemini is temporarily unavailable (HTTP 503). Try again later.",
+            504: "Gemini gateway timed out (HTTP 504). Try again later.",
+        }
+        super().__init__(messages.get(code, f"Gemini service error (HTTP {code})."))
+
+
 def payload(model, name, memories, conversation, awake, trigger, observation=None, game=None):
     context = {"speaker": name, "awake_friends": awake, "your_memories": memories[-15:],
                "conversation": conversation[-16:], "situation": trigger, "game": game}
@@ -73,10 +94,8 @@ def post(key, path, body):
         with urllib.request.urlopen(request, timeout=45) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
-        messages = {401: "Gemini API key rejected. Check Settings.", 403: "Gemini access denied. Check your API key, API restrictions and model access.",
-                    429: "Gemini API quota or rate limit reached.", 400: "Gemini rejected this request. Check your API key and model's JSON, vision and thinking support.",
-                    404: "Gemini model unavailable. Choose a supported model in Settings."}
-        raise RuntimeError(messages.get(error.code, f"Gemini service error ({error.code}).")) from None
+        # Don't display raw provider bodies: they may echo request data or credentials.
+        raise GeminiAPIError(error.code) from None
     except (urllib.error.URLError, TimeoutError):
         raise RuntimeError("Gemini connection timed out or is offline.") from None
 
@@ -124,6 +143,12 @@ def companion_turn(key, model, name, memories, conversation, awake, trigger, rem
         if used > remaining:
             result.error = "Provider usage exceeded its preflight count. Hangout paused; this companion is asleep."
             result.exhausted = True
+    except GeminiAPIError as error:
+        result.used = reserved if error.usage_unknown else 0
+        result.error = str(error)
+        if error.usage_unknown:
+            result.error += (" Usage is uncertain; reserved tokens were kept." if reserved else
+                             " No generation was submitted; local token allowance was returned.")
     except (ValueError, TypeError, KeyError):
         result.used = result.used or reserved
         result.error = "The reply was incomplete or invalid. Its token usage was charged; hangout paused."

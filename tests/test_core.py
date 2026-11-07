@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ai import companion_turn, payload, post, DEFAULT_MODEL
+from ai import companion_turn, payload, post, DEFAULT_MODEL, GeminiAPIError
 from house import House, CHARACTERS
 from games import Mafia, TicTacToe
 from screen import browser_snapshot_matches, png_rgb
@@ -129,6 +129,24 @@ class AITests(unittest.TestCase):
         result, _ = self.run_turn(responses=[{"totalTokens": 300}, RuntimeError("timeout")])
         self.assertEqual(result.used, 720)
         self.assertIn("timeout", result.error)
+
+    def test_rejected_generations_do_not_spend_local_allowance(self):
+        for code in (400, 401, 402, 403, 404, 429):
+            with self.subTest(code=code):
+                result, _ = self.run_turn(responses=[{"totalTokens": 300}, GeminiAPIError(code)])
+                self.assertEqual(result.used, 0)
+                self.assertTrue(result.error)
+
+    def test_billing_message_is_actionable(self):
+        error = urllib.error.HTTPError("https://generativelanguage.googleapis.com", 402, "Payment Required", {}, None)
+        with patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaisesRegex(GeminiAPIError, "prepaid API credits are depleted"):
+                post("test-only", f"/{DEFAULT_MODEL}:generateContent", {})
+
+    def test_uncertain_server_error_keeps_reservation(self):
+        result, _ = self.run_turn(responses=[{"totalTokens": 300}, GeminiAPIError(503)])
+        self.assertEqual(result.used, 720)
+        self.assertIn("503", result.error)
 
     def test_malformed_reply_still_charged(self):
         result, _ = self.run_turn(responses=[{"totalTokens": 300}, {"usageMetadata": {"totalTokenCount": 400}, "candidates": [{"content": {"parts": [{"text": "unfinished JSON"}]}}]}])

@@ -88,7 +88,8 @@ The authenticated HTTP bridge listens only on `127.0.0.1:17373`. Its random toke
 - **Port busy:** quit the older Pip or another Screen Squatters instance first.
 - **Can't reach the house:** launch the desktop app. If your browser requests local network access, allow it for this extension.
 - **Pairing rejected:** copy the code again from Connection settings. Deleting `.local` regenerates it on next launch.
-- **AI error:** check key, API quota, and model compatibility. Automatic hangout pauses after errors; re-enable it after fixing the connection.
+- **HTTP 402 / prepaid credits depleted:** the key may be valid and `countTokens` may work while generation is blocked by billing. Open [Google AI Studio Projects](https://ai.studio/projects), check the API project's billing and add prepaid credits. Rejected generation requests don't spend the companion's local allowance.
+- **Other AI errors:** messages include the HTTP code. Check key, API quota, and model compatibility. Automatic hangout pauses after errors; re-enable it after fixing the connection. Explicit client rejections (including 400/401/402/403/404/429) return their token reservation. Timeouts and server errors retain a conservative reservation because usage is uncertain.
 - **Character falls asleep before reaching the exact limit:** the next input plus a usable reply wouldn't fit. Refill its allowance.
 - **High usage:** context is charged on every turn, not just visible dialogue. Shorter context and fewer awake housemates reduce usage.
 
@@ -105,3 +106,5 @@ python tests/ui_smoke.py
 ```
 
 Core tests cover budgets, crash reservations, memory isolation, reset, game rules, role privacy, bridge authentication, snapshot selection and PNG encoding. Node tests use isolated mocked Chrome APIs for popup/worker contracts and text filtering. The UI smoke check uses a temporary house and random local port, mocks AI replies, opens real windows, exercises both games and captures only its own controlled window to verify native PNG encoding. It closes its windows afterward. No live API calls are made by the tests. Real model behaviour and extension installation/permissions still require testing with your API account and browser.
+
+To diagnose connectivity, run `python diagnose_gemini.py`. It prompts for a key with hidden input (never saved), then checks model availability and token counting. Add `--generate` to also make one short generation request, which may use API credits. `--model MODEL_ID` selects a different model. Diagnostic output includes HTTP codes and usage metadata, not credentials or conversation/page content.
