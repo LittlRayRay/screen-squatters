@@ -10,17 +10,6 @@ A little Windows desktop home for four AI housemates. They're here to hang out, 
 | **Mika** | Gentle, quietly certain peacemaker with a fictional garden charity, a love of tea and a hidden talent for precision goldsmithing. |
 
 ## Start the house
-
-### Judges’ demo
-
-Double-click **launch_demo.cmd** for the separate, offline presentation. It starts a guided tour of 14 chapters (about six minutes). **Pause tour**, **Back**, **Next**, **Replay scene** and the chapter list let you control the presentation. The main app still starts with **launch.cmd**.
-
-The demo reuses the real house, characters, typewriter speech, physics, memory storage, window-permission controller, game rules, poker table, movie seating and settings. Dialogue, browser/page content, movie captions and token usage are clearly labelled as staged/simulated; it makes no Gemini calls and needs no API key, Firefox setup or internet connection. Window movement targets two registered demo-owned prop windows through a restricted demo backend, demonstrating the controller without touching your apps. It never enables real screenshots or reads personal windows. A temporary save and random local bridge port keep it separate from your normal house; closing the demo discards its memories and preferences.
-
-Presenter route: open the house → meet the cast → group chat and shared memory → throw/bounce → staged Firefox metadata → window mischief → cartoon squabble → invitation and tic-tac-toe → poker → Mafia → debate → movie mode → sleep/recovery → settings and optional factory reset. **Player autopilot** handles the user’s game seat by default; uncheck it to let a judge play. Tour pause stops scheduled narration and automatic game turns while keeping animations and manual chat/actions available. Click **Try this feature** for the chapter’s interactive action. Window **Pause** and **Undo** remain accessible in the guide. The final chapter leaves settings open for exploration; resetting there affects only the demo’s temporary house.
-
-For a rehearsal without auto-advance, run `python demo.py`. For an automated isolated check, run `python demo.py --smoke-test` (or `launch_demo.cmd --smoke-test`). The showcase demonstrates real local mechanics, not live Gemini reasoning, live Firefox integration or native access to arbitrary applications; use the normal app for those integrations.
-
 ### Normal app
 
 Windows with Python 3.10+ and Tkinter is required (Python 3.11 is already installed on this laptop). Double-click **launch.cmd**, or run `python desktop.py` in this folder. If an older Screen Squatters instance is running, right-click its character and quit it first: both versions use port 17373.
